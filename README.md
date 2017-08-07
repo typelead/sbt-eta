@@ -5,7 +5,7 @@ An sbt plugin that overrides the build cycle to compile Etlas projects located i
 
 ### Prerequisites
 
-- [Etlas](http://eta-lang.org/docs/html/getting-started.html#method-1-binary-installation) 
+- [Etlas](https://github.com/typelead/etlas) >= 1.0.2.0
   - Make sure it's visible on the `PATH`.
 
     ```shell
