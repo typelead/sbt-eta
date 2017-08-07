@@ -1,6 +1,6 @@
 # sbt-eta Example Project
 
-This project show cases a setup between Eta and Scala that you are free to use as a
+This project showcases a setup between Eta and Scala that you are free to use as a
 template.
 
 ## Description
