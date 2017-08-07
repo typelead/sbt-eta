@@ -1,0 +1,15 @@
+*.class
+*.log
+
+# make specific
+sbtexists
+
+# sbt specific
+target/
+lib_managed/
+src_managed/
+project/boot/
+project/plugins/project/
+project/target/
+
+output.json
