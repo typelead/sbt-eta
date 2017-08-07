@@ -40,18 +40,19 @@ directory.
 ## Configuration
 
 ```scala
-etaSource in Compile := [your eta directory]
+etaSource in Compile := (sourceDirectory in Compile).value / "something"
 ```
-Type: `File`
-Default: `src/main/eta`
+- **Type:** `File`
+- **Default:** `src/main/eta`
 
 This is the root of your Etlas project.
 
 ```scala
-etaTarget := [target directory]
+etaTarget := target.value / "something"
 ```
-Type: `File`
-Default: `target/eta/dist`
+
+- **Type:** `File`
+- **Default:** `target/eta/dist`
 
 This is where all of Etlas's build artifacts are stored.
 
