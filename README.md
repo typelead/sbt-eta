@@ -22,7 +22,7 @@ addSbtPlugin("com.typelead" % "sbt-eta" % "0.1.0")
 
 ## Example
 
-An example project integration Eta with Scala is provided in the [example](./README.md)
+An example project integration Eta with Scala is provided in the [example](./example/README.md)
 directory.
 
 ## Basics
