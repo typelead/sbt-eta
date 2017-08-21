@@ -11,7 +11,7 @@ object SbtEta extends AutoPlugin {
 
   object autoImport {
     val etaCompile = TaskKey[Unit]("eta-compile", "Build your Eta project.")
-    val etaRun     = TaskKey[Unit]("eta-run", "Clean your Eta project.")
+    val etaRun     = TaskKey[Unit]("eta-run", "Run your Eta project.")
     val etaClean   = TaskKey[Unit]("eta-clean", "Clean your Eta project.")
 
     val etaSource  = SettingKey[File]("eta-source", "Default Eta source directory.")
