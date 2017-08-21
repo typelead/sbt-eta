@@ -25,7 +25,7 @@ object SbtEta extends AutoPlugin {
     etaCompile in Compile := {
       val s   = streams.value
       val cwd = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath;
+      val dist = etaTarget.value.getCanonicalPath
       etlas(Seq("build", "--builddir", dist), cwd, Left(s))
       ()
     },
@@ -33,14 +33,14 @@ object SbtEta extends AutoPlugin {
     etaClean := {
       val s    = streams.value
       val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath;
+      val dist = etaTarget.value.getCanonicalPath
       etlas(Seq("clean", "--builddir", dist), cwd, Left(s))
       ()
     },
     etaRun := {
       val s    = streams.value
       val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath;
+      val dist = etaTarget.value.getCanonicalPath
       etlas(Seq("run", "--builddir", dist), cwd, Left(s))
       ()
     },
@@ -52,7 +52,7 @@ object SbtEta extends AutoPlugin {
       val s    = sLog.value
       val deps = libraryDependencies.value
       val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath;
+      val dist = etaTarget.value.getCanonicalPath
       s.info("[etlas] Checking Maven dependencies...")
       val output = etlas(Seq("deps", "--maven", "--builddir", dist), cwd, Right(s), true,
                          s => !(s.r.findAllIn(":").length == 2 && !s.contains(" ")))
@@ -64,7 +64,7 @@ object SbtEta extends AutoPlugin {
       val s    = streams.value
       val cp   = (unmanagedJars in Compile).value
       val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath;
+      val dist = etaTarget.value.getCanonicalPath
       s.log.info("[etlas] Retrieving Eta dependency jar paths...")
       val filterFn = (s:String) => !(s.contains(".jar") && !(s.contains("Linking")))
       val output = etlas(Seq("deps", "--classpath", "--builddir", dist), cwd, Left(s),
@@ -84,12 +84,12 @@ object SbtEta extends AutoPlugin {
            ,filterLog: String => Boolean = s => true): Seq[String] = {
     val lineBuffer = new ArrayBuffer[String]
     val logInfo    = streams match {
-      case Left(out)  => (s: String) => out.log.info(s);
-      case Right(out) => (s: String) => out.info(s);
+      case Left(out)  => (s: String) => out.log.info(s)
+      case Right(out) => (s: String) => out.info(s)
     }
     val logError   = streams match {
-      case Left(out)  => (s: String) => out.log.error(s);
-      case Right(out) => (s: String) => out.error(s);
+      case Left(out)  => (s: String) => out.log.error(s)
+      case Right(out) => (s: String) => out.error(s)
     }
     val logger =
       new ProcessLogger {
@@ -109,8 +109,8 @@ object SbtEta extends AutoPlugin {
       }
     val exitCode = Process("etlas" +: args, cwd) ! logger
     if (exitCode != 0) {
-      var errorString = "\n";
-      errorString += "\n [etlas] Exit Failure " ++ exitCode.toString;
+      var errorString = "\n"
+      errorString += "\n [etlas] Exit Failure " ++ exitCode.toString
       sys.error(errorString)
     }
     if (saveOutput) lineBuffer
