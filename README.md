@@ -11,6 +11,7 @@ An sbt plugin that overrides the build cycle to compile Etlas projects located i
     ```shell
     etlas --version
     ```
+See [this](https://github.com/typelead/sbt-eta/issues/7) issue if you want to know why the recent versions of Etlas are not yet supported.
 
 ## Install
 
