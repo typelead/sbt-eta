@@ -3,6 +3,7 @@ package com.typelead
 import sbt._
 import Keys._
 import scala.collection.mutable.ArrayBuffer
+import scala.sys.process.{Process, ProcessLogger}
 
 object SbtEta extends AutoPlugin {
 
@@ -74,7 +75,7 @@ object SbtEta extends AutoPlugin {
                          .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
       cp ++ etaCp.classpath
     },
-    watchSources := watchSources.value ++ ((etaSource in Compile).value ** "*").get
+    watchSources ++= ((etaSource in Compile).value ** "*").get
   )
 
   override def projectSettings = baseEtaSettings
@@ -93,13 +94,13 @@ object SbtEta extends AutoPlugin {
     }
     val logger =
       new ProcessLogger {
-        override def info(s: => String) = {
+        override def out(s: => String) = {
           lineBuffer += s
           if (filterLog(s)) {
             logInfo("[etlas] " ++ s)
           }
         }
-        override def error(s: => String) = {
+        override def err(s: => String) = {
           lineBuffer += s
           if (filterLog(s)) {
             logError("[etlas] " ++ s)

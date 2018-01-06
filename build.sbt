@@ -1,12 +1,12 @@
 lazy val root = (project in file(".")).
   settings(
     inThisBuild(List(
-                  version      := "0.1.0",
+                  version      := "0.1.1-SNAPSHOT",
                   organization := "com.typelead",
-                  scalaVersion := "2.10.6"
                 )),
     name              := "sbt-eta",
     sbtPlugin         := true,
+    crossSbtVersions  := Seq("0.13.16", "1.1.0"),
     description       := "sbt plugin to work with Eta projects",
     licenses          := Seq(("BSD 3-Clause", url("https://github.com/typelead/sbt-eta/blob/master/LICENSE"))),
     scalacOptions     := Seq("-feature", "-deprecation"),
