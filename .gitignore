@@ -1,5 +1,6 @@
 *.class
 *.log
+dist
 
 # make specific
 sbtexists

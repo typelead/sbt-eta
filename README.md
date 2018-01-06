@@ -1,5 +1,7 @@
 # sbt-eta
 
+[![Build Status](https://travis-ci.org/typelead/sbt-eta.svg?branch=master)](https://travis-ci.org/typelead/sbt-eta)
+
 An sbt plugin that overrides the build cycle to compile Etlas projects located in
 `src/main/eta`. It also provides tasks for compiling & running Scala/Eta programs.
 
