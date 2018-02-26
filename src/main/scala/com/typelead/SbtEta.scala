@@ -3,6 +3,7 @@ package com.typelead
 import sbt._
 import Keys._
 import scala.collection.mutable.ArrayBuffer
+import scala.io.Source
 import scala.sys.process.{Process, ProcessLogger}
 
 object SbtEta extends AutoPlugin {
@@ -51,29 +52,50 @@ object SbtEta extends AutoPlugin {
     },
     libraryDependencies := {
       val s    = sLog.value
-      val deps = libraryDependencies.value
+      var deps = libraryDependencies.value
       val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath
+      s.info("[etlas] Installing dependencies...")
+      etlas(Seq("install", "--dependencies-only"), cwd, Right(s))
       s.info("[etlas] Checking Maven dependencies...")
-      val output = etlas(Seq("deps", "--maven", "--builddir", dist), cwd, Right(s), true,
-                         s => !(s.r.findAllIn(":").length == 2 && !s.contains(" ")))
-      deps ++ parseMavenDeps(output)
+      getCabalFile(cwd) match {
+        case Some(cabal) => getLibName(cwd, cabal) match {
+          case Some(lib) => {
+            val filterFn = (s:String) => !(s.r.findAllIn(":").length == 2 && !s.contains(" "))
+            val output = etlas(Seq("deps", "--maven", "lib:" ++ lib),
+                               cwd, Right(s), true, filterFn)
+            deps = deps ++ parseMavenDeps(output)
+          }
+          case None => s.error("[etlas] No project name specified.")
+        }
+        case None => s.error("[etlas] No cabal file found.")
+      }
+      deps
     },
     unmanagedJars in Compile := {
       (libraryDependencies in Compile).value
       (etaCompile in Compile).value
       val s    = streams.value
-      val cp   = (unmanagedJars in Compile).value
+      var cp   = (unmanagedJars in Compile).value
       val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath
+      s.log.info("[etlas] Installing dependencies...")
+      etlas(Seq("install", "--dependencies-only"), cwd, Left(s))
       s.log.info("[etlas] Retrieving Eta dependency jar paths...")
-      val filterFn = (s:String) => !(s.contains(".jar") && !(s.contains("Linking")))
-      val output = etlas(Seq("deps", "--classpath", "--builddir", dist), cwd, Left(s),
-                         true, filterFn)
-      val etaCp  = output.filter(s => !filterFn(s))
-                         .map(s => PathFinder(file(s)))
-                         .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
-      cp ++ etaCp.classpath
+      getCabalFile(cwd) match {
+        case Some(cabal) => getLibName(cwd, cabal) match {
+          case Some(lib) => {
+            val filterFn = (s:String) => !(s.contains(".jar") && !(s.contains("Linking")))
+            val output = etlas(Seq("deps", "--classpath", "lib:" ++ lib),
+                               cwd, Left(s), true, filterFn)
+            val etaCp  = output.filter(s => !filterFn(s))
+                               .map(s => PathFinder(file(s)))
+                               .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
+            cp = cp ++ etaCp.classpath
+          }
+          case None => s.log.error("[etlas] No project name specified.")
+        }
+        case None => s.log.error("[etlas] No cabal file found.")
+      }
+      cp
     },
     watchSources ++= ((etaSource in Compile).value ** "*").get
   )
@@ -124,5 +146,21 @@ object SbtEta extends AutoPlugin {
                  val parts = line.split(":")
                  parts(0) % parts(1) % parts(2)
                })
+
+  def getCabalFile(cwd: File): Option[String] = {
+    cwd.listFiles
+      .map(_.getName)
+      .filter(_.matches(""".*\.cabal$"""))
+      .headOption
+  }
+
+  def getLibName(cwd: File, cabal: String): Option[String] = {
+    Source.fromFile(cwd / cabal).getLines
+      .filter(_.matches("""\s*name:\s*\S+\s*$"""))
+      .toSeq
+      .headOption
+      .map(_.split(":")(1))
+      .map(_.trim)
+  }
 
 }
