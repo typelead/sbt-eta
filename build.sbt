@@ -12,5 +12,6 @@ lazy val root = (project in file(".")).
     scalacOptions     := Seq("-feature", "-deprecation"),
     publishMavenStyle := false,
     bintrayRepository := "sbt-plugins",
-    bintrayOrganization in bintray := None
+    bintrayOrganization in bintray := None,
+    resolvers += Resolver.jcenterRepo
   )
