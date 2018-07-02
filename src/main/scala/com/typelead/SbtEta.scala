@@ -61,7 +61,7 @@ object SbtEta extends AutoPlugin {
         case Some(cabal) => getLibName(cwd, cabal) match {
           case Some(lib) => {
             val filterFn = (s:String) => !(s.r.findAllIn(":").length == 2 && !s.contains(" "))
-            val output = etlas(Seq("deps", "--maven", "lib:" ++ lib),
+            val output = etlas(Seq("old-deps", "--maven", "lib:" ++ lib),
                                cwd, Right(s), true, filterFn)
             deps = deps ++ parseMavenDeps(output)
           }
@@ -84,7 +84,7 @@ object SbtEta extends AutoPlugin {
         case Some(cabal) => getLibName(cwd, cabal) match {
           case Some(lib) => {
             val filterFn = (s:String) => !(s.contains(".jar") && !(s.contains("Linking")))
-            val output = etlas(Seq("deps", "--classpath", "lib:" ++ lib),
+            val output = etlas(Seq("old-deps", "--classpath", "lib:" ++ lib),
                                cwd, Left(s), true, filterFn)
             val etaCp  = output.filter(s => !filterFn(s))
                                .map(s => PathFinder(file(s)))
