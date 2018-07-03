@@ -61,7 +61,7 @@ object SbtEta extends AutoPlugin {
         case Some(cabal) => getLibName(cwd, cabal) match {
           case Some(lib) => {
             val filterFn = (s:String) => !(s.r.findAllIn(":").length == 2 && !s.contains(" "))
-            val output = etlas(Seq("deps", "--maven", "lib:" ++ lib),
+            val output = etlas(Seq("old-deps", "--maven", "lib:" ++ lib),
                                cwd, Right(s), true, filterFn)
             deps = deps ++ parseMavenDeps(output)
           }
@@ -77,21 +77,32 @@ object SbtEta extends AutoPlugin {
       val s    = streams.value
       var cp   = (unmanagedJars in Compile).value
       val cwd  = (etaSource in Compile).value
+      val dist = etaTarget.value.getCanonicalPath
       s.log.info("[etlas] Installing dependencies...")
       etlas(Seq("install", "--dependencies-only"), cwd, Left(s))
       s.log.info("[etlas] Retrieving Eta dependency jar paths...")
       getCabalFile(cwd) match {
-        case Some(cabal) => getLibName(cwd, cabal) match {
-          case Some(lib) => {
+        case Some(cabal) => (getLibName(cwd, cabal), getLibVersion(cwd, cabal)) match {
+          case (Some(lib), Some(version)) => {
             val filterFn = (s:String) => !(s.contains(".jar") && !(s.contains("Linking")))
-            val output = etlas(Seq("deps", "--classpath", "lib:" ++ lib),
+            val output = etlas(Seq("old-deps", "--classpath", "lib:" ++ lib),
                                cwd, Left(s), true, filterFn)
             val etaCp  = output.filter(s => !filterFn(s))
                                .map(s => PathFinder(file(s)))
                                .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
-            cp = cp ++ etaCp.classpath
+
+            val etaVersion = etlas(Seq("exec", "eta", "--", "--numeric-version"),
+                                   cwd, Left(s), true).head
+            val etlasVersion = etlas(Seq("--numeric-version"),
+                                     cwd, Left(s), true).head
+            val packageId = lib + "-" + version
+            val packageJar = PathFinder(file(dist) / "build" /
+                                          ("eta-" + etaVersion) / packageId /
+                                          "build" / (packageId + "-inplace.jar"))
+
+            cp = cp ++ etaCp.classpath ++ packageJar.classpath
           }
-          case None => s.log.error("[etlas] No project name specified.")
+          case (_, _) => s.log.error("[etlas] No project name specified.")
         }
         case None => s.log.error("[etlas] No cabal file found.")
       }
@@ -157,6 +168,15 @@ object SbtEta extends AutoPlugin {
   def getLibName(cwd: File, cabal: String): Option[String] = {
     Source.fromFile(cwd / cabal).getLines
       .filter(_.matches("""\s*name:\s*\S+\s*$"""))
+      .toSeq
+      .headOption
+      .map(_.split(":")(1))
+      .map(_.trim)
+  }
+
+  def getLibVersion(cwd: File, cabal: String): Option[String] = {
+    Source.fromFile(cwd / cabal).getLines
+      .filter(_.matches("""\s*version:\s*\S+\s*$"""))
       .toSeq
       .headOption
       .map(_.split(":")(1))
