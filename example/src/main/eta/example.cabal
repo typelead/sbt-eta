@@ -10,10 +10,11 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Example.Transform
-  build-depends:       base >=4.8 && <4.9
+  build-depends:       base >=4.11 && <4.12
                      , aeson
                      , lens-aeson
                      , lens
                      , text
   default-language:    Haskell2010
   default-extensions:  OverloadedStrings
+  maven-depends:       com.google.guava:guava:25.0-jre

@@ -13,4 +13,8 @@ object Main extends App {
     writer.write(Transform.fixJson(json) ++ "\n")
   }
   writer.close()
+
+  val test = Transform.testBinomial()
+
+  println(s"Hello: $test")
 }

@@ -24,6 +24,7 @@ object SbtEta extends AutoPlugin {
 
   val baseEtaSettings = Seq(
     etaTarget := target.value / "eta" / "dist",
+
     etaCompile in Compile := {
       val s   = streams.value
       val cwd = (etaSource in Compile).value
@@ -31,7 +32,9 @@ object SbtEta extends AutoPlugin {
       etlas(Seq("build", "--builddir", dist), cwd, Left(s))
       ()
     },
+
     etaSource in Compile := (sourceDirectory in Compile).value / "eta",
+
     etaClean := {
       val s    = streams.value
       val cwd  = (etaSource in Compile).value
@@ -39,6 +42,7 @@ object SbtEta extends AutoPlugin {
       etlas(Seq("clean", "--builddir", dist), cwd, Left(s))
       ()
     },
+
     etaRun := {
       val s    = streams.value
       val cwd  = (etaSource in Compile).value
@@ -46,23 +50,26 @@ object SbtEta extends AutoPlugin {
       etlas(Seq("run", "--builddir", dist), cwd, Left(s))
       ()
     },
+
     clean := {
       etaClean.value
       clean.value
     },
+
     libraryDependencies := {
       val s    = sLog.value
       var deps = libraryDependencies.value
       val cwd  = (etaSource in Compile).value
+
       s.info("[etlas] Installing dependencies...")
       etlas(Seq("install", "--dependencies-only"), cwd, Right(s))
+
       s.info("[etlas] Checking Maven dependencies...")
+
       getCabalFile(cwd) match {
         case Some(cabal) => getLibName(cwd, cabal) match {
           case Some(lib) => {
-            val filterFn = (s:String) => !(s.r.findAllIn(":").length == 2 && !s.contains(" "))
-            val output = etlas(Seq("old-deps", "--maven", "lib:" ++ lib),
-                               cwd, Right(s), true, filterFn)
+            val output = etlas(Seq("deps", "lib:" ++ lib), cwd, Right(s), true)
             deps = deps ++ parseMavenDeps(output)
           }
           case None => s.error("[etlas] No project name specified.")
@@ -71,34 +78,33 @@ object SbtEta extends AutoPlugin {
       }
       deps
     },
+
     unmanagedJars in Compile := {
       (libraryDependencies in Compile).value
       (etaCompile in Compile).value
+
       val s    = streams.value
       var cp   = (unmanagedJars in Compile).value
       val cwd  = (etaSource in Compile).value
       val dist = etaTarget.value.getCanonicalPath
-      s.log.info("[etlas] Installing dependencies...")
-      etlas(Seq("install", "--dependencies-only"), cwd, Left(s))
+
       s.log.info("[etlas] Retrieving Eta dependency jar paths...")
+
       getCabalFile(cwd) match {
         case Some(cabal) => (getLibName(cwd, cabal), getLibVersion(cwd, cabal)) match {
           case (Some(lib), Some(version)) => {
-            val filterFn = (s:String) => !(s.contains(".jar") && !(s.contains("Linking")))
-            val output = etlas(Seq("old-deps", "--classpath", "lib:" ++ lib),
-                               cwd, Left(s), true, filterFn)
-            val etaCp  = output.filter(s => !filterFn(s))
-                               .map(s => PathFinder(file(s)))
-                               .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
+            val output = etlas(Seq("deps", "lib:" ++ lib), cwd, Left(s), true)
+            val etaCp  = parseDeps(output)
+              .map(s => PathFinder(file(s)))
+              .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
 
-            val etaVersion = etlas(Seq("exec", "eta", "--", "--numeric-version"),
-                                   cwd, Left(s), true).head
-            val etlasVersion = etlas(Seq("--numeric-version"),
-                                     cwd, Left(s), true).head
+            val etaVersion = etlas(Seq("exec", "eta", "--", "--numeric-version"), cwd, Left(s), true).head
+            val etlasVersion = etlas(Seq("--numeric-version"), cwd, Left(s), true).head
+
             val packageId = lib + "-" + version
-            val packageJar = PathFinder(file(dist) / "build" /
-                                          ("eta-" + etaVersion) / packageId /
-                                          "build" / (packageId + "-inplace.jar"))
+            val packageJar = PathFinder(
+              file(dist) / "build" / ("eta-" + etaVersion) / packageId / "build" / (packageId + "-inplace.jar")
+            )
 
             cp = cp ++ etaCp.classpath ++ packageJar.classpath
           }
@@ -113,18 +119,30 @@ object SbtEta extends AutoPlugin {
 
   override def projectSettings = baseEtaSettings
 
-  def etlas(args: Seq[String], cwd: File, streams: Either[TaskStreams, Logger]
-           ,saveOutput: Boolean = false
-           ,filterLog: String => Boolean = s => true): Seq[String] = {
+  def etlas(
+    args: Seq[String],
+    cwd: File,
+    streams: Either[TaskStreams, Logger],
+    saveOutput: Boolean = false,
+    filterLog: String => Boolean = s => false
+  ): Seq[String] = {
     val lineBuffer = new ArrayBuffer[String]
-    val logInfo    = streams match {
+
+    val logDebug = streams match {
+      case Left(out)  => (s: String) => out.log.debug(s)
+      case Right(out) => (s: String) => out.debug(s)
+    }
+
+    val logInfo = streams match {
       case Left(out)  => (s: String) => out.log.info(s)
       case Right(out) => (s: String) => out.info(s)
     }
-    val logError   = streams match {
+
+    val logError = streams match {
       case Left(out)  => (s: String) => out.log.error(s)
       case Right(out) => (s: String) => out.error(s)
     }
+
     val logger =
       new ProcessLogger {
         override def out(s: => String) = {
@@ -141,22 +159,44 @@ object SbtEta extends AutoPlugin {
         }
         override def buffer[T](s: => T) = s
       }
+
+    logDebug(s"[etlas] Running `etlas ${args.mkString(" ")} in '$cwd'`...")
     val exitCode = Process("etlas" +: args, cwd) ! logger
+
     if (exitCode != 0) {
       var errorString = "\n"
       errorString += "\n [etlas] Exit Failure " ++ exitCode.toString
       sys.error(errorString)
     }
-    if (saveOutput) lineBuffer
-    else Nil
+
+    if (saveOutput) lineBuffer else Nil
   }
 
-  def parseMavenDeps(lines: Seq[String]): Seq[ModuleID] =
-    lines.filter(line => line.r.findAllIn(":").length == 2)
-         .map(line => {
-                 val parts = line.split(":")
-                 parts(0) % parts(1) % parts(2)
-               })
+  def parseMavenDeps(allLines: Seq[String]): Seq[ModuleID] = {
+    val lines = allLines
+      .filter(_.startsWith("maven-dependencies,"))
+      .map(_.dropWhile(_ != ',').tail)
+
+    val dependencies = lines
+      .map(_.split(":"))
+      .filter(_.size == 3)
+      .map { parts =>
+        parts(0) % parts(1) % parts(2)
+      }
+
+    dependencies
+  }
+
+  def parseDeps(allLines: Seq[String]): Seq[String] = {
+    val lines = allLines.filter(_.startsWith("dependency,"))
+
+    val dependencies = lines
+      .map(_.split(","))
+      .filter(_.length > 2)
+      .map(_.apply(3))
+
+    dependencies
+  }
 
   def getCabalFile(cwd: File): Option[String] = {
     cwd.listFiles
