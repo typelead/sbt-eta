@@ -3,3 +3,4 @@ language: scala
 jdk: oraclejdk8
 script:
 - sbt ^test
+- cd example/ && sbt run
