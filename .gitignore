@@ -1,6 +1,7 @@
 *.class
 *.log
 dist
+.metals
 
 # make specific
 sbtexists

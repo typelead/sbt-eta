@@ -1,0 +1,19 @@
+version: 2.0
+jobs:
+  build:
+    docker:
+      - image: typelead/eta:latest
+    steps:
+    - checkout
+    - run: etlas update
+    - run: ./scripts/install-scala.sh
+    - run: 
+        name: Running the sbt example
+        working_directory: example
+        command: sbt run
+
+workflows:
+  version: 2
+  full_cycle:
+    jobs:
+    - build
