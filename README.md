@@ -7,20 +7,19 @@ An sbt plugin that overrides the build cycle to compile Etlas projects located i
 
 ### Prerequisites
 
-- [Etlas](https://github.com/typelead/etlas) >= 1.0.2.0 && < 1.1.0.0
+- [Etlas](https://github.com/typelead/etlas) >= 1.5.0.0
   - Make sure it's visible on the `PATH`.
 
     ```shell
     etlas --version
     ```
-See [this](https://github.com/typelead/sbt-eta/issues/7) issue if you want to know why the recent versions of Etlas are not yet supported.
 
 ## Install
 
 Add the following to your `project/plugins.sbt` file:
 
 ```scala
-addSbtPlugin("com.typelead" % "sbt-eta" % "0.1.0")
+addSbtPlugin("com.typelead" % "sbt-eta" % "0.3.0")
 ```
 
 ## Example

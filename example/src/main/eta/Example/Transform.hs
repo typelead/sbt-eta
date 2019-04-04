@@ -8,6 +8,12 @@ import Data.Aeson.Lens
 import Data.Text (Text)
 import qualified Data.Text as T
 
+foreign import java unsafe "@static com.google.common.math.IntMath.binomial" binomial
+  :: Int -> Int -> Int
+
+testBinomial :: Int
+testBinomial = binomial 9 4
+
 fixJson :: JString -> JString
 fixJson = toJava . transform . fromJava
   where transform :: Text -> Text
@@ -17,3 +23,6 @@ fixJson = toJava . transform . fromJava
 
 foreign export java "@static eta.example.Transform.fixJson"
   fixJson :: JString -> JString
+
+foreign export java "@static eta.example.Transform.testBinomial"
+  testBinomial :: Int
