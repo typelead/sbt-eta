@@ -119,12 +119,19 @@ object SbtEta extends AutoPlugin {
 
   override def projectSettings = baseEtaSettings
 
+  def defaultFilterLog(s: String): Boolean = {
+    getParam("etlas.logger.output") match {
+      case Some("TRUE") => true
+      case _ => false
+    }
+  }
+
   def etlas(
     args: Seq[String],
     cwd: File,
     streams: Either[TaskStreams, Logger],
     saveOutput: Boolean = false,
-    filterLog: String => Boolean = s => false
+    filterLog: String => Boolean = defaultFilterLog
   ): Seq[String] = {
     val lineBuffer = new ArrayBuffer[String]
 
@@ -160,7 +167,11 @@ object SbtEta extends AutoPlugin {
         override def buffer[T](s: => T) = s
       }
 
-    logDebug(s"[etlas] Running `etlas ${args.mkString(" ")} in '$cwd'`...")
+    val logCmd = getParam("etlas.logger.cmd.level") match {
+      case Some("INFO") => logInfo
+      case _ => logDebug
+    }
+    logCmd(s"[etlas] Running `etlas ${args.mkString(" ")} in '$cwd'`...")
     val exitCode = Process("etlas" +: args, cwd) ! logger
 
     if (exitCode != 0) {
@@ -221,6 +232,10 @@ object SbtEta extends AutoPlugin {
       .headOption
       .map(_.split(":")(1))
       .map(_.trim)
+  }
+
+  def getParam(name: String): Option[String] = {
+    Option(System.getProperty(name)).map(_.toUpperCase)
   }
 
 }
