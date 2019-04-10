@@ -195,30 +195,29 @@ object SbtEta extends AutoPlugin {
     if (saveOutput) lineBuffer else Nil
   }
 
+  def findAllMavenDependencies(allLines: Seq[String]): Seq[String] = {
+    for {
+      line <- allLines if line.startsWith("maven-dependencies,")
+    } yield line.dropWhile(_ != ',').tail
+  }
+
+  def findAllDependencies(allLines: Seq[String], idx: Int): Seq[String] = {
+    for {
+      line <- allLines if line.startsWith("dependency,")
+      parts = line.split(",") if parts.length > idx
+    } yield parts(idx)
+  }
+
   def parseMavenDeps(allLines: Seq[String]): Seq[ModuleID] = {
-    val lines = allLines
-      .filter(_.startsWith("maven-dependencies,"))
-      .map(_.dropWhile(_ != ',').tail)
-
-    val dependencies = lines
-      .map(_.split(":"))
-      .filter(_.size == 3)
-      .map { parts =>
-        parts(0) % parts(1) % parts(2)
-      }
-
-    dependencies
+    for {
+      line <- findAllMavenDependencies(allLines) ++ findAllDependencies(allLines, 2)
+      parts <- line.split(":").grouped(3) if parts.length == 3
+      module = parts(0) % parts(1) % parts(2)
+    } yield module
   }
 
   def parseDeps(allLines: Seq[String]): Seq[String] = {
-    val lines = allLines.filter(_.startsWith("dependency,"))
-
-    val dependencies = lines
-      .map(_.split(","))
-      .filter(_.length > 2)
-      .map(_.apply(3))
-
-    dependencies
+    findAllDependencies(allLines, 3)
   }
 
   def getCabalFile(cwd: File): Option[String] = {
