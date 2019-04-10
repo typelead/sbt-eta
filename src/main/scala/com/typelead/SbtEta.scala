@@ -69,7 +69,7 @@ object SbtEta extends AutoPlugin {
       getCabalFile(cwd) match {
         case Some(cabal) => getLibName(cwd, cabal) match {
           case Some(lib) => {
-            val output = etlas(Seq("deps", "lib:" ++ lib), cwd, Right(s), true)
+            val output = etlas(Seq("deps", (if (isExecutable(cwd, cabal)) "" else "lib:") ++ lib), cwd, Right(s), true)
             deps = deps ++ parseMavenDeps(output)
           }
           case None => s.error("[etlas] No project name specified.")
@@ -92,8 +92,9 @@ object SbtEta extends AutoPlugin {
 
       getCabalFile(cwd) match {
         case Some(cabal) => (getLibName(cwd, cabal), getLibVersion(cwd, cabal)) match {
-          case (Some(lib), Some(version)) => {
-            val output = etlas(Seq("deps", "lib:" ++ lib), cwd, Left(s), true)
+          case (Some(lib), Some(libVersion)) => {
+            val isExe  = isExecutable(cwd, cabal)
+            val output = etlas(Seq("deps", (if (isExe) "" else "lib:") ++ lib), cwd, Left(s), true)
             val etaCp  = parseDeps(output)
               .map(s => PathFinder(file(s)))
               .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
@@ -101,18 +102,29 @@ object SbtEta extends AutoPlugin {
             val etaVersion = etlas(Seq("exec", "eta", "--", "--numeric-version"), cwd, Left(s), true).head
             val etlasVersion = etlas(Seq("--numeric-version"), cwd, Left(s), true).head
 
-            val packageId = lib + "-" + version
-            val packageJar = PathFinder(
-              file(dist) / "build" / ("eta-" + etaVersion) / packageId / "build" / (packageId + "-inplace.jar")
-            )
+            val packageId = lib + "-" + libVersion
+            val buildPath = file(dist) / "build" / ("eta-" + etaVersion) / packageId
+            val packageJar = if (isExe) {
+              buildPath / "x" / lib / "build" / lib / (lib + ".jar")
+            } else {
+              buildPath / "build" / (packageId + "-inplace.jar")
+            }
 
-            cp = cp ++ etaCp.classpath ++ packageJar.classpath
+            s.log.info("[etlas] JAR: " + packageJar.getAbsolutePath)
+
+            cp = cp ++ etaCp.classpath ++ PathFinder(packageJar).classpath
           }
           case (_, _) => s.log.error("[etlas] No project name specified.")
         }
         case None => s.log.error("[etlas] No cabal file found.")
       }
       cp
+    },
+    mainClass in (Compile, run) := {
+      getMainClass((etaSource in Compile).value, (mainClass in (Compile, run)).value, streams.value)
+    },
+    mainClass in (Compile, packageBin) := {
+      getMainClass((etaSource in Compile).value, (mainClass in (Compile, packageBin)).value, streams.value)
     },
     watchSources ++= ((etaSource in Compile).value ** "*").get
   )
@@ -234,8 +246,26 @@ object SbtEta extends AutoPlugin {
       .map(_.trim)
   }
 
+  def isExecutable(cwd: File, cabal: String): Boolean = {
+    Source.fromFile(cwd / cabal).getLines
+      .filter(_.matches("""\s*executable\s*\S+\s*$"""))
+      .nonEmpty
+  }
+
   def getParam(name: String): Option[String] = {
     Option(System.getProperty(name)).map(_.toUpperCase)
+  }
+
+  def getMainClass(cwd: File, defaultMainClass: Option[String], s: TaskStreams): Option[String] = {
+    getCabalFile(cwd) match {
+      case None =>
+        s.log.error("[etlas] No cabal file found.")
+        defaultMainClass
+      case Some(cabal) if isExecutable(cwd, cabal) =>
+        Some("eta.main")
+      case _ =>
+        defaultMainClass
+    }
   }
 
 }
