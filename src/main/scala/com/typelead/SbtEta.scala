@@ -1,7 +1,8 @@
 package com.typelead
 
-import sbt._
+import sbt.{Def, _}
 import Keys._
+
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import scala.sys.process.{Process, ProcessLogger}
@@ -14,6 +15,7 @@ object SbtEta extends AutoPlugin {
   object autoImport {
     val etaCompile = TaskKey[Unit]("eta-compile", "Build your Eta project.")
     val etaRun     = TaskKey[Unit]("eta-run", "Run your Eta project.")
+    val etaTest    = TaskKey[Unit]("eta-test", "Run your Eta project's tests.")
     val etaClean   = TaskKey[Unit]("eta-clean", "Clean your Eta project.")
 
     val etaSource  = SettingKey[File]("eta-source", "Default Eta source directory.")
@@ -22,14 +24,24 @@ object SbtEta extends AutoPlugin {
 
   import autoImport._
 
-  val baseEtaSettings = Seq(
+  val baseEtaSettings: Seq[Def.Setting[_]] = Seq(
     etaTarget := target.value / "eta" / "dist",
 
     etaCompile in Compile := {
       val s   = streams.value
       val cwd = (etaSource in Compile).value
       val dist = etaTarget.value.getCanonicalPath
-      etlas(Seq("build", "--builddir", dist), cwd, Left(s))
+      etlas(Seq("build", "--builddir", dist), cwd, Left(s), filterLog = _ => true)
+      ()
+    },
+
+    etaCompile in Test := {
+      val s   = streams.value
+      val cwd = (etaSource in Compile).value
+      val dist = etaTarget.value.getCanonicalPath
+      getArtifacts(cwd, Left(s), Artifact.testSuite).foreach {
+        artifact => etlas(Seq("build", artifact.depsPackage, "--builddir", dist), cwd, Left(s), filterLog = _ => true)
+      }
       ()
     },
 
@@ -51,6 +63,16 @@ object SbtEta extends AutoPlugin {
       ()
     },
 
+    etaTest := {
+      val s    = streams.value
+      val cwd  = (etaSource in Compile).value
+      val dist = etaTarget.value.getCanonicalPath
+      getArtifacts(cwd, Left(s), Artifact.testSuite).foreach {
+        artifact => etlas(Seq("test", artifact.name, "--builddir", dist), cwd, Left(s), filterLog = _ => true)
+      }
+      ()
+    },
+
     clean := {
       etaClean.value
       clean.value
@@ -64,20 +86,9 @@ object SbtEta extends AutoPlugin {
       s.info("[etlas] Installing dependencies...")
       etlas(Seq("install", "--dependencies-only"), cwd, Right(s))
 
-      s.info("[etlas] Checking Maven dependencies...")
-
-      getCabalFile(cwd) match {
-        case Some(cabal) => resolveDeps(cabal, cwd, Right(s)) match {
-          case Some(output) =>
-            deps ++ parseMavenDeps(output)
-          case None =>
-            s.error("[etlas] No project name specified.")
-            deps
-        }
-        case None =>
-          s.error("[etlas] No cabal file found.")
-          deps
-      }
+      deps ++
+        getLibraryDependencies(cwd, Right(s), Artifact.not(Artifact.testSuite)) ++
+        getLibraryDependencies(cwd, Right(s), Artifact.testSuite).map(_ % Test)
     },
 
     unmanagedJars in Compile := {
@@ -89,44 +100,64 @@ object SbtEta extends AutoPlugin {
       val cwd  = (etaSource in Compile).value
       val dist = etaTarget.value.getCanonicalPath
 
-      s.log.info("[etlas] Retrieving Eta dependency jar paths...")
-
-      getCabalFile(cwd) match {
-        case Some(cabal) => resolveDeps(cabal, cwd, Left(s)) match {
-          case Some(output) =>
-            val etaCp = parseDeps(output)
-              .map(s => PathFinder(file(s)))
-              .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
-
-            val etaVersion   = etlas(Seq("exec", "eta", "--", "--numeric-version"), cwd, Left(s), saveOutput = true).head
-            val etlasVersion = etlas(Seq("--numeric-version"), cwd, Left(s), saveOutput = true).head
-
-            val packageJars = getArtifactsJars(cwd, cabal, dist, etaVersion)
-
-            packageJars.foreach { jar =>
-              s.log.info("[etlas] JAR: " + jar.data.getAbsolutePath)
-            }
-
-            cp ++ etaCp.classpath ++ packageJars
-          case _ =>
-            s.log.error("[etlas] No project name specified.")
-            cp
-        }
-        case None =>
-          s.log.error("[etlas] No cabal file found.")
-          cp
-      }
+      cp ++ getFullClasspath(cwd, dist, Left(s), Artifact.not(Artifact.testSuite))
     },
+    unmanagedJars in Test := {
+      (libraryDependencies in Compile).value
+      (etaCompile in Test).value
+
+      val s    = streams.value
+      val cp   = (unmanagedJars in Test).value
+      val cwd  = (etaSource in Compile).value
+      val dist = etaTarget.value.getCanonicalPath
+
+      cp ++ getFullClasspath(cwd, dist, Left(s), Artifact.testSuite)
+    },
+
+    compile in Test := {
+      (etaCompile in Test).value
+      (compile in Test).value
+    },
+    test in Test := {
+      etaTest.value
+      (test in Test).value
+    },
+
     mainClass in (Compile, run) := {
-      getMainClass((etaSource in Compile).value, (mainClass in (Compile, run)).value, streams.value)
+      getMainClass((etaSource in Compile).value, (mainClass in (Compile, run)).value, Left(streams.value))
     },
     mainClass in (Compile, packageBin) := {
-      getMainClass((etaSource in Compile).value, (mainClass in (Compile, packageBin)).value, streams.value)
+      getMainClass((etaSource in Compile).value, (mainClass in (Compile, packageBin)).value, Left(streams.value))
     },
-    watchSources ++= ((etaSource in Compile).value ** "*").get
+
+    watchSources ++= ((etaSource in Compile).value ** "*").get,
   )
 
-  override def projectSettings = baseEtaSettings
+  override def projectSettings: Seq[Def.Setting[_]] = baseEtaSettings
+
+  implicit class LoggerOps(val streams: Either[TaskStreams, Logger]) extends AnyVal {
+
+    def debug(s: String): Unit = streams match {
+      case Left(out)  => out.log.debug(s)
+      case Right(out) => out.debug(s)
+    }
+
+    def info(s: String): Unit = streams match {
+      case Left(out)  => out.log.info(s)
+      case Right(out) => out.info(s)
+    }
+
+    def warn(s: String): Unit = streams match {
+      case Left(out)  => out.log.warn(s)
+      case Right(out) => out.warn(s)
+    }
+
+    def error(s: String): Unit = streams match {
+      case Left(out)  => out.log.error(s)
+      case Right(out) => out.error(s)
+    }
+
+  }
 
   def defaultFilterLog(s: String): Boolean = {
     getParam("etlas.logger.output") match {
@@ -144,39 +175,24 @@ object SbtEta extends AutoPlugin {
   ): Seq[String] = {
     val lineBuffer = new ArrayBuffer[String]
 
-    val logDebug = streams match {
-      case Left(out)  => (s: String) => out.log.debug(s)
-      case Right(out) => (s: String) => out.debug(s)
-    }
-
-    val logInfo = streams match {
-      case Left(out)  => (s: String) => out.log.info(s)
-      case Right(out) => (s: String) => out.info(s)
-    }
-
-    val logError = streams match {
-      case Left(out)  => (s: String) => out.log.error(s)
-      case Right(out) => (s: String) => out.error(s)
-    }
-
     val logger =
       new ProcessLogger {
         override def out(s: => String): Unit = {
           lineBuffer += s
           if (filterLog(s)) {
-            logInfo("[etlas] " ++ s)
+            streams.info("[etlas] " ++ s)
           }
         }
         override def err(s: => String): Unit = {
           lineBuffer += s
-          logError("[etlas] " ++ s)
+          streams.error("[etlas] " ++ s)
         }
         override def buffer[T](s: => T): T = s
       }
 
     val logCmd = getParam("etlas.logger.cmd.level") match {
-      case Some("INFO") => logInfo
-      case _ => logDebug
+      case Some("INFO") => streams.info(_)
+      case _ => streams.debug(_)
     }
     logCmd(s"[etlas] Running `etlas ${args.mkString(" ")} in '$cwd'`...")
     val exitCode = Process("etlas" +: args, cwd) ! logger
@@ -188,9 +204,22 @@ object SbtEta extends AutoPlugin {
     if (saveOutput) lineBuffer else Nil
   }
 
-  def resolveDeps(cabal: String, cwd: File, streams: Either[TaskStreams, Logger]): Option[Seq[String]] = {
+  def getLibraryDependencies(cwd: File,
+                             streams: Either[TaskStreams, Logger],
+                             filter: Artifact.Filter = Artifact.all): Seq[ModuleID] = {
+    streams.info("[etlas] Checking Maven dependencies...")
+    resolveDeps(cwd, streams, filter) match {
+      case Some(output) =>
+        parseMavenDeps(output)
+      case None =>
+        streams.error("[etlas] No project name specified.")
+        Nil
+    }
+  }
+
+  def resolveDeps(cwd: File, streams: Either[TaskStreams, Logger], filter: Artifact.Filter = Artifact.all): Option[Seq[String]] = {
     for {
-      artifacts <- Some(getArtifacts(cwd, cabal)) if artifacts.nonEmpty
+      artifacts <- Some(getArtifacts(cwd, streams, filter)) if artifacts.nonEmpty
     } yield artifacts.flatMap { artifact =>
       etlas(Seq("deps", artifact.depsPackage), cwd, streams, saveOutput = true)
     }
@@ -247,63 +276,134 @@ object SbtEta extends AutoPlugin {
   }
 
   sealed trait Artifact {
+    def name: String
     def depsPackage: String
   }
-  final case class Library(name: String) extends Artifact {
+  final case class Library(override val name: String) extends Artifact {
     override def depsPackage: String = "lib:" + name
   }
-  final case class Executable(name: String) extends Artifact {
+  final case class Executable(override val name: String) extends Artifact {
     override def depsPackage: String = "exe:" + name
   }
-
-  def getArtifacts(cwd: File, cabal: String): Seq[Artifact] = {
-    val ExecutableWithName = """\s*executable\s*(\S+)\s*$""".r
-    val ExecutableWithoutName = """\s*executable(\s*)$""".r
-    val LibraryPattern = """\s*library(\s*)$""".r
-    getProjectName(cwd, cabal).map { name =>
-      Source.fromFile(cwd / cabal).getLines.collect {
-        case LibraryPattern(_)        => Library(name)
-        case ExecutableWithName(exe)  => Executable(exe)
-        case ExecutableWithoutName(_) => Executable(name)
-      }.toList.sortBy {
-        case Library(_)    => 0
-        case Executable(_) => 1
-      }
-    }.getOrElse(Nil)
+  final case class TestSuite(override val name: String) extends Artifact {
+    override def depsPackage: String = "test:" + name
   }
 
-  def getArtifactsJars(cwd: File, cabal: String, dist: String, etaVersion: String): Classpath = {
-    (getProjectName(cwd, cabal), getProjectVersion(cwd, cabal)) match {
-      case (Some(projectName), Some(projectVersion)) =>
-        val packageId = projectName + "-" + projectVersion
-        val buildPath = file(dist) / "build" / ("eta-" + etaVersion) / packageId
-        getArtifacts(cwd, cabal).map {
-          case Executable(exeName) =>
-            buildPath / "x" / exeName / "build" / exeName / (exeName + ".jar")
-          case Library(_) =>
-            buildPath / "build" / (packageId + "-inplace.jar")
-        }.flatMap(jar => PathFinder(jar).classpath)
-      case _ =>
+  object Artifact {
+
+    type Filter = Artifact => Boolean
+
+    val all: Filter = _ => true
+    val library: Filter = {
+      case Library(_) => true
+      case _ => false
+    }
+    val executable: Filter = {
+      case Executable(_) => true
+      case _ => false
+    }
+    val testSuite: Filter = {
+      case TestSuite(_) => true
+      case _ => false
+    }
+
+    def not(filter: Filter): Filter = a => !filter(a)
+
+  }
+
+  def getArtifacts(cwd: File, streams: Either[TaskStreams, Logger], filter: Artifact.Filter): Seq[Artifact] = {
+    val LibraryPattern = """\s*library(\s*)$""".r
+    val ExecutableWithName = """\s*executable\s*(\S+)\s*$""".r
+    val ExecutableWithoutName = """\s*executable(\s*)$""".r
+    val TestSuiteWithName = """\s*test-suite\s*(\S+)\s*$""".r
+    val TestSuiteWithoutName = """\s*test-suite(\s*)$""".r
+    getCabalFile(cwd) match {
+      case Some(cabal) =>
+        getProjectName(cwd, cabal).map { name =>
+          Source.fromFile(cwd / cabal).getLines.collect {
+            case LibraryPattern(_)        => Library(name)
+            case ExecutableWithName(exe)  => Executable(exe)
+            case ExecutableWithoutName(_) => Executable(name)
+            case TestSuiteWithName(suite) => TestSuite(suite)
+            case TestSuiteWithoutName(_)  => TestSuite(name)
+          }.filter(filter).toList.sortBy {
+            case Library(_)    => 0
+            case Executable(_) => 1
+            case TestSuite(_)  => 2
+          }
+        }.getOrElse(Nil)
+      case None =>
+        streams.error("[etlas] No cabal file found.")
         Nil
     }
   }
 
-  def hasExecutable(cwd: File, cabal: String): Boolean = {
-    getArtifacts(cwd, cabal).exists {
-      case Executable(_) => true
-      case Library(_) => false
+  def getArtifactsJars(cwd: File,
+                       cabal: String,
+                       dist: String,
+                       streams: Either[TaskStreams, Logger],
+                       filter: Artifact.Filter = Artifact.all): Classpath = {
+
+    val etaVersion   = etlas(Seq("exec", "eta", "--", "--numeric-version"), cwd, streams, saveOutput = true).head
+    val etlasVersion = etlas(Seq("--numeric-version"), cwd, streams, saveOutput = true).head
+
+    (getProjectName(cwd, cabal), getProjectVersion(cwd, cabal)) match {
+      case (Some(projectName), Some(projectVersion)) =>
+        val packageId = projectName + "-" + projectVersion
+        val buildPath = file(dist) / "build" / ("eta-" + etaVersion) / packageId
+        getArtifacts(cwd, streams, filter).map {
+          case Library(_) =>
+            buildPath / "build" / (packageId + "-inplace.jar")
+          case Executable(exe) =>
+            buildPath / "x" / exe / "build" / exe / (exe + ".jar")
+          case TestSuite(suite) =>
+            buildPath / "t" / suite / "build" / suite / (suite + ".jar")
+        }.flatMap(jar => PathFinder(jar).classpath)
+      case _ =>
+        Nil
+    }
+
+  }
+
+  def getFullClasspath(cwd: File,
+                       dist: String,
+                       streams: Either[TaskStreams, Logger],
+                       filter: Artifact.Filter = Artifact.all): Classpath = {
+    streams.info("[etlas] Retrieving Eta dependency jar paths...")
+    getCabalFile(cwd) match {
+      case Some(cabal) =>
+        resolveDeps(cwd, streams, filter) match {
+          case Some(output) =>
+            val etaCp = parseDeps(output)
+              .map(s => PathFinder(file(s)))
+              .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
+
+            val packageJars = getArtifactsJars(cwd, cabal, dist, streams, filter)
+
+            packageJars.foreach { jar =>
+              streams.info("[etlas] JAR: " + jar.data.getAbsolutePath)
+            }
+
+            etaCp.classpath ++ packageJars
+          case _ =>
+            streams.error("[etlas] No project name specified.")
+            Nil
+        }
+      case None =>
+        streams.error("[etlas] No cabal file found.")
+        Nil
     }
   }
 
-  def getMainClass(cwd: File, defaultMainClass: Option[String], s: TaskStreams): Option[String] = {
-    getCabalFile(cwd) match {
-      case None =>
-        s.log.error("[etlas] No cabal file found.")
-        defaultMainClass
-      case Some(cabal) if hasExecutable(cwd, cabal) =>
-        Some("eta.main")
-      case _ =>
-        defaultMainClass
+  def hasExecutable(cwd: File, streams: Either[TaskStreams, Logger]): Boolean = {
+    getArtifacts(cwd, streams, Artifact.executable).nonEmpty
+  }
+
+  def getMainClass(cwd: File, defaultMainClass: Option[String], streams: Either[TaskStreams, Logger]): Option[String] = {
+    if (hasExecutable(cwd, streams)) {
+      Some("eta.main")
+    } else {
+      defaultMainClass
     }
   }
 
