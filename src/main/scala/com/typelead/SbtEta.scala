@@ -208,19 +208,11 @@ object SbtEta extends AutoPlugin {
                              streams: Either[TaskStreams, Logger],
                              filter: Artifact.Filter = Artifact.all): Seq[ModuleID] = {
     streams.info("[etlas] Checking Maven dependencies...")
-    resolveDeps(cwd, streams, filter) match {
-      case Some(output) =>
-        parseMavenDeps(output)
-      case None =>
-        streams.error("[etlas] No project name specified.")
-        Nil
-    }
+    parseMavenDeps(resolveDeps(cwd, streams, filter))
   }
 
-  def resolveDeps(cwd: File, streams: Either[TaskStreams, Logger], filter: Artifact.Filter = Artifact.all): Option[Seq[String]] = {
-    for {
-      artifacts <- Some(getArtifacts(cwd, streams, filter)) if artifacts.nonEmpty
-    } yield artifacts.flatMap { artifact =>
+  def resolveDeps(cwd: File, streams: Either[TaskStreams, Logger], filter: Artifact.Filter = Artifact.all): Seq[String] = {
+    getArtifacts(cwd, streams, filter).flatMap { artifact =>
       etlas(Seq("deps", artifact.depsPackage), cwd, streams, saveOutput = true)
     }
   }
@@ -319,19 +311,23 @@ object SbtEta extends AutoPlugin {
     val TestSuiteWithoutName = """\s*test-suite(\s*)$""".r
     getCabalFile(cwd) match {
       case Some(cabal) =>
-        getProjectName(cwd, cabal).map { name =>
-          Source.fromFile(cwd / cabal).getLines.collect {
-            case LibraryPattern(_)        => Library(name)
-            case ExecutableWithName(exe)  => Executable(exe)
-            case ExecutableWithoutName(_) => Executable(name)
-            case TestSuiteWithName(suite) => TestSuite(suite)
-            case TestSuiteWithoutName(_)  => TestSuite(name)
-          }.filter(filter).toList.sortBy {
-            case Library(_)    => 0
-            case Executable(_) => 1
-            case TestSuite(_)  => 2
-          }
-        }.getOrElse(Nil)
+        getProjectName(cwd, cabal) match {
+          case Some(lib) =>
+            Source.fromFile(cwd / cabal).getLines.collect {
+              case LibraryPattern(_)        => Library(lib)
+              case ExecutableWithName(exe)  => Executable(exe)
+              case ExecutableWithoutName(_) => Executable(lib)
+              case TestSuiteWithName(suite) => TestSuite(suite)
+              case TestSuiteWithoutName(_)  => TestSuite(lib)
+            }.filter(filter).toList.sortBy {
+              case Library(_)    => 0
+              case Executable(_) => 1
+              case TestSuite(_)  => 2
+            }
+          case None =>
+            streams.error("[etlas] No project name specified.")
+            Nil
+        }
       case None =>
         streams.error("[etlas] No cabal file found.")
         Nil
@@ -372,23 +368,18 @@ object SbtEta extends AutoPlugin {
     streams.info("[etlas] Retrieving Eta dependency jar paths...")
     getCabalFile(cwd) match {
       case Some(cabal) =>
-        resolveDeps(cwd, streams, filter) match {
-          case Some(output) =>
-            val etaCp = parseDeps(output)
-              .map(s => PathFinder(file(s)))
-              .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
+        val output = resolveDeps(cwd, streams, filter)
+        val etaCp = parseDeps(output)
+          .map(s => PathFinder(file(s)))
+          .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
 
-            val packageJars = getArtifactsJars(cwd, cabal, dist, streams, filter)
+        val packageJars = getArtifactsJars(cwd, cabal, dist, streams, filter)
 
-            packageJars.foreach { jar =>
-              streams.info("[etlas] JAR: " + jar.data.getAbsolutePath)
-            }
-
-            etaCp.classpath ++ packageJars
-          case _ =>
-            streams.error("[etlas] No project name specified.")
-            Nil
+        packageJars.foreach { jar =>
+          streams.info("[etlas] JAR: " + jar.data.getAbsolutePath)
         }
+
+        etaCp.classpath ++ packageJars
       case None =>
         streams.error("[etlas] No cabal file found.")
         Nil
