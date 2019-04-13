@@ -52,29 +52,31 @@ object Cabal {
 
   def parseCabal(cwd: File, log: Logger): Option[Cabal] = {
     getCabalFile(cwd) match {
-      case Some(cabal) => parseProjectName(cwd, cabal) match {
-        case Some(proj) => parseProjectVersion(cwd, cabal) match {
-          case Some(ver) =>
-            Some(Cabal(
-              name = proj,
-              version = ver,
-              artifacts = parseArtifacts(cwd, cabal, proj)
-            ))
+      case Some(cabal) =>
+        log.info(s"Found '$cabal' in '${cwd.getCanonicalFile}'.")
+        parseProjectName(cwd, cabal) match {
+          case Some(proj) => parseProjectVersion(cwd, cabal) match {
+            case Some(ver) =>
+              Some(Cabal(
+                name = proj,
+                version = ver,
+                artifacts = parseArtifacts(cwd, cabal, proj)
+              ))
+            case None =>
+              log.error("No project version specified.")
+              None
+          }
           case None =>
-            log.error("No project version specified.")
+            log.error("No project name specified.")
             None
         }
-        case None =>
-          log.error("No project name specified.")
-          None
-      }
       case None =>
-        log.error("No cabal file found.")
+        log.error(s"No cabal file found in '${cwd.getCanonicalFile}'.")
         None
     }
   }
 
-  private def getCabalFile(cwd: File): Option[String] = {
+  def getCabalFile(cwd: File): Option[String] = {
     cwd.listFiles.map(_.getName).find(_.matches(""".*\.cabal$"""))
   }
 

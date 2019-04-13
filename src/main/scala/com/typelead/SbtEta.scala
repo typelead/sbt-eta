@@ -16,50 +16,37 @@ object SbtEta extends AutoPlugin {
     val etaTest    = TaskKey[Unit]("eta-test"   , "Run your Eta project's tests.")
     val etaClean   = TaskKey[Unit]("eta-clean"  , "Clean your Eta project.")
 
-    val etaSource  = SettingKey[File]("eta-source", "Default Eta source directory.")
-    val etaTarget  = SettingKey[File]("eta-target", "Location to store build artifacts.")
+    val etaPackageDir = SettingKey[File]("eta-package-dir", "Root directory of the Eta package (default = baseDirectory).")
+    val etaSource     = SettingKey[File]("eta-source"     , "Default Eta source directory (default = src/main/eta).")
+    val etaTarget     = SettingKey[File]("eta-target"     , "Location to store build artifacts (default = target/eta/dist).")
   }
 
   import autoImport._
 
   val baseEtaSettings: Seq[Def.Setting[_]] = Seq(
+
+    etaPackageDir := baseDirectory.value,
+    etaSource in Compile := (sourceDirectory in Compile).value / "eta",
     etaTarget := target.value / "eta" / "dist",
 
     etaCompile in Compile := {
-      val s   = streams.value
-      val cwd = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath
-      Etlas.build(cwd, dist, Logger(s))
+      Etlas.build(etaPackageDir.value, etaTarget.value, Logger(streams.value))
     },
 
     etaCompile in Test := {
-      val s   = streams.value
-      val cwd = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath
-      Etlas.buildArtifacts(cwd, dist, Logger(s), Artifact.testSuite)
+      Etlas.buildArtifacts(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.testSuite)
     },
 
-    etaSource in Compile := (sourceDirectory in Compile).value / "eta",
-
     etaClean := {
-      val s    = streams.value
-      val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath
-      Etlas.clean(cwd, dist, Logger(s))
+      Etlas.clean(etaPackageDir.value, etaTarget.value, Logger(streams.value))
     },
 
     etaRun := {
-      val s    = streams.value
-      val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath
-      Etlas.run(cwd, dist, Logger(s))
+      Etlas.run(etaPackageDir.value, etaTarget.value, Logger(streams.value))
     },
 
     etaTest := {
-      val s    = streams.value
-      val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath
-      Etlas.test(cwd, dist, Logger(s))
+      Etlas.test(etaPackageDir.value, etaTarget.value, Logger(streams.value))
     },
 
     clean := {
@@ -68,38 +55,30 @@ object SbtEta extends AutoPlugin {
     },
 
     libraryDependencies := {
-      val s    = sLog.value
       val deps = libraryDependencies.value
-      val cwd  = (etaSource in Compile).value
 
-      Etlas.install(cwd, Logger(s))
+      //Etlas.install(etaPackageDir.value, Logger(sLog.value))
 
       deps ++
-        Etlas.getLibraryDependencies(cwd, Logger(s), Artifact.not(Artifact.testSuite)) ++
-        Etlas.getLibraryDependencies(cwd, Logger(s), Artifact.testSuite).map(_ % Test)
+        Etlas.getLibraryDependencies(etaPackageDir.value, Logger(sLog.value), Artifact.not(Artifact.testSuite)) ++
+        Etlas.getLibraryDependencies(etaPackageDir.value, Logger(sLog.value), Artifact.testSuite).map(_ % Test)
     },
 
     unmanagedJars in Compile := {
       (libraryDependencies in Compile).value
       (etaCompile in Compile).value
 
-      val s    = streams.value
-      val cp   = (unmanagedJars in Compile).value
-      val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath
+      val cp = (unmanagedJars in Compile).value
 
-      cp ++ Etlas.getFullClasspath(cwd, dist, Logger(s), Artifact.not(Artifact.testSuite))
+      cp ++ Etlas.getFullClasspath(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.not(Artifact.testSuite))
     },
     unmanagedJars in Test := {
       (libraryDependencies in Compile).value
       (etaCompile in Test).value
 
-      val s    = streams.value
-      val cp   = (unmanagedJars in Test).value
-      val cwd  = (etaSource in Compile).value
-      val dist = etaTarget.value.getCanonicalPath
+      val cp = (unmanagedJars in Test).value
 
-      cp ++ Etlas.getFullClasspath(cwd, dist, Logger(s), Artifact.testSuite)
+      cp ++ Etlas.getFullClasspath(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.testSuite)
     },
 
     compile in Test := {
@@ -112,15 +91,40 @@ object SbtEta extends AutoPlugin {
     },
 
     mainClass in (Compile, run) := {
-      getMainClass((etaSource in Compile).value, (mainClass in (Compile, run)).value, Logger(streams.value))
+      getMainClass(etaPackageDir.value, (mainClass in (Compile, run)).value, Logger(streams.value))
     },
     mainClass in (Compile, packageBin) := {
-      getMainClass((etaSource in Compile).value, (mainClass in (Compile, packageBin)).value, Logger(streams.value))
+      getMainClass(etaPackageDir.value, (mainClass in (Compile, packageBin)).value, Logger(streams.value))
     },
 
     watchSources ++= ((etaSource in Compile).value ** "*").get,
+
+    commands += etaInitCommand
   )
 
   override def projectSettings: Seq[Def.Setting[_]] = baseEtaSettings
+
+  private def etaInitCommand: Command = Command.command("eta-init") { state =>
+    val extracted = Project.extract(state)
+    val cwd = extracted.get(etaPackageDir)
+    val log = Logger(extracted.get(sLog))
+    Cabal.getCabalFile(cwd) match {
+      case Some(cabal) =>
+        log.warn(s"Found '$cabal' in '${cwd.getCanonicalPath}'. Could not initialize new Eta project.")
+        state
+      case None =>
+        Etlas.init(
+          cwd,
+          extracted.get(normalizedName),
+          extracted.get(description),
+          extracted.get(version),
+          extracted.get(developers),
+          extracted.get(homepage),
+          extracted.get(etaSource in Compile),
+          log
+        )
+        extracted.appendWithSession(baseEtaSettings, state)
+    }
+  }
 
 }
