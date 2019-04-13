@@ -46,7 +46,7 @@ object SbtEta extends AutoPlugin {
     },
 
     etaTest := {
-      Etlas.test(etaPackageDir.value, etaTarget.value, Logger(streams.value))
+      Etlas.testArtifacts(etaPackageDir.value, etaTarget.value, Logger(streams.value))
     },
 
     clean := {

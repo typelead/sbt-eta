@@ -104,7 +104,6 @@ object Etlas {
     etlas(Seq(
       "init",
       "--non-interactive",
-      "--is-library",
       "--is-executable",
       s"--package-dir=${cwd.getCanonicalPath}",
       s"--package-name=$name-eta",
