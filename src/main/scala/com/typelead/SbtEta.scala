@@ -14,6 +14,7 @@ object SbtEta extends AutoPlugin {
 
     val Eta: Configuration = config("Eta")
     val EtaLib: Configuration = config("EtaLib")
+    val EtaExe: Configuration = config("EtaExe")
     val EtaTest: Configuration = config("EtaTest")
 
     val etaVersion   = SettingKey[String]("eta-version", "Version of the Eta compiler.")
@@ -24,7 +25,7 @@ object SbtEta extends AutoPlugin {
 
   import autoImport._
 
-  private val etaCabal = TaskKey[Cabal]("eta-cabal", "Structure of .cabal file.")
+  private val etaCabal = SettingKey[Cabal]("eta-cabal", "Structure of .cabal file.")
 
   private val baseEtaSettings: Seq[Def.Setting[_]] = {
     Seq(
@@ -49,13 +50,15 @@ object SbtEta extends AutoPlugin {
         Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, Logger(sLog.value), Artifact.testSuite).map(_ % Test)
       }
     ) ++
-      makeSettings(EtaLib, Compile, Artifact.or(Artifact.library, Artifact.executable)) ++
+      makeSettings(EtaLib, Compile, Artifact.library) ++
+      makeSettings(EtaExe, Compile, Artifact.executable) ++
       makeSettings(EtaTest, Test, Artifact.or(Artifact.library, Artifact.testSuite))
   }
 
   private def makeSettings(config: Configuration, base: Configuration, filter: Cabal.Artifact.Filter): Seq[Def.Setting[_]] = {
     Seq(
       sourceDirectory in config := (sourceDirectory in base).value / "eta",
+      sourceDirectories in config := Seq((sourceDirectory in config).value),
       exportedProductJars in config := {
         (etaCompile in base).value
         etaCabal.value.getArtifactsJars((target in Eta).value, (etaVersion in Eta).value, filter)
@@ -71,9 +74,7 @@ object SbtEta extends AutoPlugin {
     // Specific Eta tasks
 
     etaCabal := {
-      val cabal = Cabal.parseCabal((baseDirectory in Eta).value, Logger(streams.value))
-      Logger(streams.value).info(cabal.toString)
-      cabal
+      Cabal.parseCabal((baseDirectory in Eta).value, Logger(sLog.value))
     },
     etaVersion := {
       Etlas.etaVersion((baseDirectory in Eta).value, Logger(sLog.value))
@@ -135,21 +136,44 @@ object SbtEta extends AutoPlugin {
       (mainClass in Eta).value orElse (mainClass in (Compile, packageBin)).value
     },
 
-    watchSources ++= (((sourceDirectory in EtaLib).value ** "*") +++ ((sourceDirectory in EtaTest).value ** "*")).get,
+    watchSources ++= {
+      ((sourceDirectory in EtaLib).value ** "*") +++
+      ((sourceDirectory in EtaExe).value ** "*") +++
+      ((sourceDirectory in EtaTest).value ** "*")
+    }.get,
 
     commands ++= Seq(etaInitCommand, etaReplCommand)
   )
 
   override def projectSettings: Seq[Def.Setting[_]] = baseProjectSettings
-  override def projectConfigurations: Seq[Configuration] = Seq(Eta, EtaLib, EtaTest)
+  override def projectConfigurations: Seq[Configuration] = Seq(Eta, EtaLib, EtaExe, EtaTest)
+
+  private def getSourceDirectories(extracted: Extracted, config: Configuration): Seq[String] = {
+    extracted.get(sourceDirectories in config).flatMap { dir =>
+      IO.relativize(extracted.get(baseDirectory in Eta), dir)
+    }
+  }
 
   private def etaInitCommand: Command = Command.command("eta-init") { state =>
     val extracted = Project.extract(state)
     val cwd = extracted.get(baseDirectory in Eta)
     val log = Logger(extracted.get(sLog))
+
+    val cabal = extracted.get(etaCabal)
+    Cabal.writeCabal(
+      extracted.get(target in Eta),
+      cabal.copy(
+        projectName    = extracted.get(name) + "-eta",
+        projectVersion = extracted.get(version),
+        projectLibrary = cabal.projectLibrary.map(_.addSourceDirectories(getSourceDirectories(extracted, EtaLib))),
+        executables    = cabal.executables.map(_.addSourceDirectories(getSourceDirectories(extracted, EtaExe))),
+        testSuites     = cabal.testSuites.map(_.addSourceDirectories(getSourceDirectories(extracted, EtaTest)))
+      )
+    )
+
     Cabal.getCabalFile(cwd) match {
-      case Some(cabal) =>
-        log.warn(s"Found '$cabal' in '${cwd.getCanonicalPath}'. Could not initialize new Eta project.")
+      case Some(file) =>
+        log.warn(s"Found '$file' in '${cwd.getCanonicalPath}'. Could not initialize new Eta project.")
         state
       case None =>
         Etlas.init(
