@@ -1,10 +1,14 @@
 package com.typelead
 
+import java.lang.ProcessBuilder.Redirect
+import java.lang.{ProcessBuilder => JProcessBuilder}
+
+import sbt.Keys._
 import sbt._
-import Keys._
 
 import scala.collection.mutable.ArrayBuffer
 import scala.sys.process.{Process, ProcessLogger}
+import scala.util.Try
 
 object Etlas {
 
@@ -29,13 +33,11 @@ object Etlas {
 
     val logger = new ProcessLogger {
       override def out(s: => String): Unit = {
-        lineBuffer += s
-        if (filterLog(s)) {
-          log.info(s)
-        }
+        if (saveOutput) lineBuffer += s
+        if (filterLog(s)) log.info(s)
       }
       override def err(s: => String): Unit = {
-        lineBuffer += s
+        if (saveOutput) lineBuffer += s
         log.error(s)
       }
       override def buffer[T](s: => T): T = s
@@ -53,6 +55,25 @@ object Etlas {
     }
 
     if (saveOutput) lineBuffer else Nil
+
+  }
+
+  private def fork(args: Seq[String], cwd: File, log: sbt.Logger): Unit = {
+
+    val logCmd = getParam("etlas.logger.cmd.level") match {
+      case Some("INFO") => Logger(log).info _
+      case _ => Logger(log).debug _
+    }
+    logCmd(s"Running `etlas ${args.mkString(" ")} in '$cwd'`...")
+
+    val jpb = new JProcessBuilder(("etlas" +: args).toArray: _ *)
+    jpb.directory(cwd)
+    jpb.redirectInput(Redirect.INHERIT)
+    val exitCode = Process(jpb).run(SbtUtils.terminalIO).exitValue()
+
+    if (exitCode != 0) {
+      sys.error("\n\n[etlas] Exit Failure " ++ exitCode.toString)
+    }
 
   }
 
@@ -121,6 +142,18 @@ object Etlas {
   def install(cwd: File, log: Logger): Unit = {
     log.info("Installing dependencies...")
     etlas(Seq("install", "--dependencies-only"), cwd, log)
+  }
+
+  def repl(cwd: File, dist: File, log: sbt.Logger): Try[Unit] = {
+    def console0(): Unit = {
+      log.info("Starting Eta interpreter...")
+      fork(withBuildDir(Seq("repl"), dist), cwd, log)
+    }
+    Run.executeTrapExit(console0(), log).recover {
+      case _: InterruptedException =>
+        log.info("Eta REPL was interrupted.")
+        ()
+    }
   }
 
   def run(cwd: File, dist: File, log: Logger): Unit = {
