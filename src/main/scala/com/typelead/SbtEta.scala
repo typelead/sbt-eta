@@ -11,96 +11,141 @@ object SbtEta extends AutoPlugin {
   override def trigger  = allRequirements
 
   object autoImport {
-    val etaCompile = TaskKey[Unit]("eta-compile", "Build your Eta project.")
-    val etaRun     = TaskKey[Unit]("eta-run"    , "Run your Eta project.")
-    val etaTest    = TaskKey[Unit]("eta-test"   , "Run your Eta project's tests.")
-    val etaClean   = TaskKey[Unit]("eta-clean"  , "Clean your Eta project.")
 
-    val etaPackageDir = SettingKey[File]("eta-package-dir", "Root directory of the Eta package (default = baseDirectory).")
-    val etaSource     = SettingKey[File]("eta-source"     , "Default Eta source directory (default = src/main/eta).")
-    val etaTarget     = SettingKey[File]("eta-target"     , "Location to store build artifacts (default = target/eta/dist).")
+    val Eta: Configuration = config("Eta")
+    val EtaLib: Configuration = config("EtaLib")
+    val EtaTest: Configuration = config("EtaTest")
+
+    val etaVersion   = SettingKey[String]("eta-version", "Version of the Eta compiler.")
+    val etlasVersion = SettingKey[String]("etlas-version", "Version of the Etlas build tool.")
+    val etaCompile   = TaskKey[Unit]("eta-compile", "Build your Eta project.")
+
   }
 
   import autoImport._
 
-  val baseEtaSettings: Seq[Def.Setting[_]] = Seq(
+  private val etaCabal = TaskKey[Cabal]("eta-cabal", "Structure of .cabal file.")
 
-    etaPackageDir := baseDirectory.value,
-    etaSource in Compile := (sourceDirectory in Compile).value / "eta",
-    etaTarget := target.value / "eta" / "dist",
+  private val baseEtaSettings: Seq[Def.Setting[_]] = {
+    Seq(
+      baseDirectory in Eta := baseDirectory.value,
+      target in Eta := target.value / "eta" / "dist",
+      // Standard tasks
+      clean in Eta := {
+        Etlas.clean((baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value))
+      },
+      run in Eta := {
+        Etlas.runArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value), Cabal.Artifact.all)
+      },
+      test in Eta := {
+        Etlas.testArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value), Cabal.Artifact.all)
+      },
+      mainClass in Eta := {
+        (etaCompile in Compile).value
+        etaCabal.value.getMainClass
+      },
+      projectDependencies in Eta := {
+        Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, Logger(sLog.value), Artifact.not(Artifact.testSuite)) ++
+        Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, Logger(sLog.value), Artifact.testSuite).map(_ % Test)
+      }
+    ) ++
+      makeSettings(EtaLib, Compile, Artifact.or(Artifact.library, Artifact.executable)) ++
+      makeSettings(EtaTest, Test, Artifact.or(Artifact.library, Artifact.testSuite))
+  }
+
+  private def makeSettings(config: Configuration, base: Configuration, filter: Cabal.Artifact.Filter): Seq[Def.Setting[_]] = {
+    Seq(
+      sourceDirectory in config := (sourceDirectory in base).value / "eta",
+      exportedProductJars in config := {
+        (etaCompile in base).value
+        etaCabal.value.getArtifactsJars((target in Eta).value, (etaVersion in Eta).value, filter)
+      },
+      unmanagedClasspath in config := {
+        Etlas.getClasspath(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value), filter)
+      }
+    )
+  }
+
+  val baseProjectSettings: Seq[Def.Setting[_]] = baseEtaSettings ++ Seq(
+
+    // Specific Eta tasks
+
+    etaCabal := {
+      val cabal = Cabal.parseCabal((baseDirectory in Eta).value, Logger(streams.value))
+      Logger(streams.value).info(cabal.toString)
+      cabal
+    },
+    etaVersion := {
+      Etlas.etaVersion((baseDirectory in Eta).value, Logger(sLog.value))
+    },
+    etlasVersion := {
+      Etlas.etlasVersion((baseDirectory in Eta).value, Logger(sLog.value))
+    },
 
     etaCompile in Compile := {
-      Etlas.build(etaPackageDir.value, etaTarget.value, Logger(streams.value))
+      Etlas.build((baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value))
     },
-
     etaCompile in Test := {
-      Etlas.buildArtifacts(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.testSuite)
+      Etlas.buildArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value), Artifact.testSuite)
     },
 
-    etaClean := {
-      Etlas.clean(etaPackageDir.value, etaTarget.value, Logger(streams.value))
-    },
-
-    etaRun := {
-      Etlas.run(etaPackageDir.value, etaTarget.value, Logger(streams.value))
-    },
-
-    etaTest := {
-      Etlas.testArtifacts(etaPackageDir.value, etaTarget.value, Logger(streams.value))
-    },
+    // Standard tasks override
 
     clean := {
-      etaClean.value
+      (clean in Eta).value
       clean.value
     },
+    update := {
+      (projectDependencies in Eta).value
+      update.value
+    },
 
-    libraryDependencies := {
-      libraryDependencies.value ++
-        Etlas.getLibraryDependencies(etaPackageDir.value, Logger(sLog.value), Artifact.not(Artifact.testSuite)) ++
-        Etlas.getLibraryDependencies(etaPackageDir.value, Logger(sLog.value), Artifact.testSuite).map(_ % Test)
+    projectDependencies := {
+      projectDependencies.value ++ (projectDependencies in Eta).value
     },
 
     unmanagedJars in Compile := {
-      (libraryDependencies in Compile).value
-      (etaCompile in Compile).value
-
       (unmanagedJars in Compile).value ++
-        Etlas.getFullClasspath(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.not(Artifact.testSuite))
+        (unmanagedClasspath in EtaLib).value ++
+        (exportedProductJars in EtaLib).value
     },
     unmanagedJars in Test := {
-      (libraryDependencies in Compile).value
-      (etaCompile in Test).value
-
       (unmanagedJars in Test).value ++
-        Etlas.getFullClasspath(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.testSuite)
+        (unmanagedClasspath in EtaTest).value ++
+        (exportedProductJars in EtaTest).value
     },
 
+    compile in Compile := {
+      (etaCompile in Compile).value
+      (compile in Compile).value
+    },
     compile in Test := {
       (etaCompile in Test).value
       (compile in Test).value
     },
     test in Test := {
-      etaTest.value
+      (test in Eta).value
       (test in Test).value
     },
 
     mainClass in (Compile, run) := {
-      getMainClass(etaPackageDir.value, (mainClass in (Compile, run)).value, Logger(streams.value))
+      (mainClass in Eta).value orElse (mainClass in (Compile, run)).value
     },
     mainClass in (Compile, packageBin) := {
-      getMainClass(etaPackageDir.value, (mainClass in (Compile, packageBin)).value, Logger(streams.value))
+      (mainClass in Eta).value orElse (mainClass in (Compile, packageBin)).value
     },
 
-    watchSources ++= ((etaSource in Compile).value ** "*").get,
+    watchSources ++= (((sourceDirectory in EtaLib).value ** "*") +++ ((sourceDirectory in EtaTest).value ** "*")).get,
 
     commands ++= Seq(etaInitCommand, etaReplCommand)
   )
 
-  override def projectSettings: Seq[Def.Setting[_]] = baseEtaSettings
+  override def projectSettings: Seq[Def.Setting[_]] = baseProjectSettings
+  override def projectConfigurations: Seq[Configuration] = Seq(Eta, EtaLib, EtaTest)
 
   private def etaInitCommand: Command = Command.command("eta-init") { state =>
     val extracted = Project.extract(state)
-    val cwd = extracted.get(etaPackageDir)
+    val cwd = extracted.get(baseDirectory in Eta)
     val log = Logger(extracted.get(sLog))
     Cabal.getCabalFile(cwd) match {
       case Some(cabal) =>
@@ -114,18 +159,18 @@ object SbtEta extends AutoPlugin {
           extracted.get(version),
           extracted.get(developers),
           extracted.get(homepage),
-          extracted.get(etaSource in Compile),
+          extracted.get(sourceDirectory in EtaLib),
           log
         )
-        extracted.appendWithSession(baseEtaSettings, state)
+        extracted.appendWithSession(baseProjectSettings, state)
     }
   }
 
   private def etaReplCommand: Command = Command.command("eta-repl") { state =>
     val extracted = Project.extract(state)
     Etlas.repl(
-      extracted.get(etaPackageDir),
-      extracted.get(etaTarget),
+      extracted.get(baseDirectory in Eta),
+      extracted.get(target in Eta),
       extracted.get(sLog)
     ).get
     println()

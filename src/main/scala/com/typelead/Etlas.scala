@@ -88,8 +88,8 @@ object Etlas {
     ()
   }
 
-  def buildArtifacts(cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
-    Cabal.getArtifacts(cwd, log, filter).foreach {
+  def buildArtifacts(cabal: Cabal, cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
+    cabal.getArtifacts(filter).foreach {
       artifact => etlas(withBuildDir(Seq("build", artifact.depsPackage), dist), cwd, log, filterLog = _ => true)
     }
   }
@@ -99,9 +99,9 @@ object Etlas {
     ()
   }
 
-  def deps(cwd: File, log: Logger, filter: Cabal.Artifact.Filter = Cabal.Artifact.all): Seq[String] = {
-    Cabal.getArtifacts(cwd, log, filter).flatMap { artifact =>
-      etlas(Seq("deps", artifact.depsPackage), cwd, log, saveOutput = true)
+  def deps(cabal: Cabal, cwd: File, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
+    cabal.getArtifacts(filter).flatMap { artifact =>
+      etlas(Seq("deps", artifact.depsPackage, "--keep-going"), cwd, log, saveOutput = true)
     }
   }
 
@@ -161,8 +161,8 @@ object Etlas {
     ()
   }
 
-  def runArtifacts(cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter = Cabal.Artifact.all): Unit = {
-    Cabal.getArtifacts(cwd, log, Cabal.Artifact.and(Cabal.Artifact.executable, filter)).foreach { artifact =>
+  def runArtifacts(cabal: Cabal, cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
+    cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.executable, filter)).foreach { artifact =>
       etlas(withBuildDir(Seq("run", artifact.name), dist), cwd, log, filterLog = _ => true)
     }
   }
@@ -171,27 +171,13 @@ object Etlas {
     etlas(withBuildDir(Seq("test"), dist), cwd, log, filterLog = _ => true)
   }
 
-  def testArtifacts(cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter = Cabal.Artifact.all): Unit = {
-    Cabal.getArtifacts(cwd, log, Cabal.Artifact.and(Cabal.Artifact.testSuite, filter)).foreach { artifact =>
+  def testArtifacts(cabal: Cabal, cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
+    cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.testSuite, filter)).foreach { artifact =>
       etlas(withBuildDir(Seq("test", artifact.name), dist), cwd, log, filterLog = _ => true)
     }
   }
 
   // Resolve dependencies
-
-  private def getArtifactsJars(cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter = Cabal.Artifact.all): Classpath = {
-    Cabal.parseCabal(cwd, log).map { cabal =>
-      val buildPath = dist / "build" / ("eta-" + Etlas.etaVersion(cwd, log)) / cabal.packageId
-      Cabal.getArtifacts(cwd, log, filter).map {
-        case Cabal.Library(_) =>
-          buildPath / "build" / (cabal.packageId + "-inplace.jar")
-        case Cabal.Executable(exe) =>
-          buildPath / "x" / exe / "build" / exe / (exe + ".jar")
-        case Cabal.TestSuite(suite) =>
-          buildPath / "t" / suite / "build" / suite / (suite + ".jar")
-      }.flatMap(jar => PathFinder(jar).classpath)
-    }.getOrElse(Nil)
-  }
 
   private def findAllDependencies(allLines: Seq[String], idx: Int): Seq[String] = {
     for {
@@ -218,26 +204,17 @@ object Etlas {
     } yield module
   }
 
-  def getLibraryDependencies(cwd: File, log: Logger, filter: Cabal.Artifact.Filter = Cabal.Artifact.all): Seq[ModuleID] = {
+  def getMavenDependencies(cabal: Cabal, cwd: File, log: Logger, filter: Cabal.Artifact.Filter): Seq[ModuleID] = {
     log.info("Checking Maven dependencies...")
-    parseMavenDeps(Etlas.deps(cwd, log, filter))
+    parseMavenDeps(Etlas.deps(cabal, cwd, log, filter))
   }
 
-  def getFullClasspath(cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter = Cabal.Artifact.all): Classpath = {
+  def getClasspath(cabal: Cabal, cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter): Classpath = {
     log.info("Retrieving Eta dependency jar paths...")
-
-    val output = Etlas.deps(cwd, log, filter)
-    val etaCp = parseDeps(output)
+    parseDeps(Etlas.deps(cabal, cwd, log, filter))
       .map(s => PathFinder(file(s)))
-      .fold(PathFinder.empty)((s1, s2) => s1 +++ s2)
-
-    val packageJars = Etlas.getArtifactsJars(cwd, dist, log, filter)
-
-    packageJars.foreach { jar =>
-      log.info("JAR: " + jar.data.getAbsolutePath)
-    }
-
-    etaCp.classpath ++ packageJars
+      .foldLeft(PathFinder.empty)((s1, s2) => s1 +++ s2)
+      .classpath
   }
 
 }

@@ -11,9 +11,10 @@ object EtaLayoutPlugin extends AutoPlugin {
   import SbtEta.autoImport._
 
   override def projectSettings: Seq[Def.Setting[_]] = Seq(
-    etaPackageDir := (sourceDirectory in Compile).value / "eta",
-    etaSource in Compile := (sourceDirectory in Compile).value / "eta",
-    etaTarget := target.value / "eta" / "dist"
+    baseDirectory in Eta := (sourceDirectory in Compile).value / "eta",
+    sourceDirectory in EtaLib := (sourceDirectory in Compile).value / "eta",
+    sourceDirectory in EtaTest := (sourceDirectory in Compile).value / "eta",
+    target in Eta := target.value / "eta" / "dist"
   )
 
 }

@@ -1,16 +1,62 @@
 package com.typelead
 
+import sbt.Keys._
 import sbt._
-
-import scala.io.Source
 
 final case class Cabal(name: String,
                        version: String,
                        artifacts: Seq[Cabal.Artifact]) {
+
   val packageId: String = name + "-" + version
+
+  def addArtifact(artifact: Cabal.Artifact): Cabal = this.copy(artifacts = artifacts :+ artifact)
+  def getArtifacts(filter: Cabal.Artifact.Filter): Seq[Cabal.Artifact] = artifacts.filter(filter).sortBy {
+    case Cabal.Library(_)    => 0
+    case Cabal.Executable(_) => 1
+    case Cabal.TestSuite(_)  => 2
+  }
+  def getArtifactsJars(dist: File, etaVersion: String, filter: Cabal.Artifact.Filter): Classpath = {
+    val buildPath = dist / "build" / ("eta-" + etaVersion) / packageId
+    getArtifacts(filter).map {
+      case Cabal.Library(_) =>
+        buildPath / "build" / (packageId + "-inplace.jar")
+      case Cabal.Executable(exe) =>
+        buildPath / "x" / exe / "build" / exe / (exe + ".jar")
+      case Cabal.TestSuite(suite) =>
+        buildPath / "t" / suite / "build" / suite / (suite + ".jar")
+    }.flatMap(jar => PathFinder(jar).classpath)
+  }
+
+  def getMainClass: Option[String] = {
+    if (hasExecutable) Some("eta.main")
+    else None
+  }
+
+  def hasLibrary   : Boolean = getArtifacts(Cabal.Artifact.library).nonEmpty
+  def hasExecutable: Boolean = getArtifacts(Cabal.Artifact.executable).nonEmpty
+  def hasTestSuite : Boolean = getArtifacts(Cabal.Artifact.testSuite).nonEmpty
+
+  def resolveNames: Cabal = this.copy(
+    artifacts = artifacts.map {
+      case Cabal.Library(Cabal.NONAME)    => Cabal.Library(name)
+      case Cabal.Executable(Cabal.NONAME) => Cabal.Executable(name)
+      case Cabal.TestSuite(Cabal.NONAME)  => Cabal.TestSuite(name)
+      case other                          => other
+    }
+  )
+
 }
 
 object Cabal {
+
+  val NONAME = "<--noname-->"
+  val NOVERSION = "<--noversion-->"
+
+  val empty: Cabal = Cabal(
+    name = NONAME,
+    version = NOVERSION,
+    artifacts = Nil
+  )
 
   sealed trait Artifact {
     def name: String
@@ -50,91 +96,49 @@ object Cabal {
 
   }
 
-  def parseCabal(cwd: File, log: Logger): Option[Cabal] = {
+  def parseCabal(cwd: File, log: Logger): Cabal = {
     getCabalFile(cwd) match {
-      case Some(cabal) =>
-        log.info(s"Found '$cabal' in '${cwd.getCanonicalFile}'.")
-        parseProjectName(cwd, cabal) match {
-          case Some(proj) => parseProjectVersion(cwd, cabal) match {
-            case Some(ver) =>
-              Some(Cabal(
-                name = proj,
-                version = ver,
-                artifacts = parseArtifacts(cwd, cabal, proj)
-              ))
-            case None =>
-              log.error("No project version specified.")
-              None
-          }
-          case None =>
-            log.error("No project name specified.")
-            None
+      case Some(file) =>
+
+        log.info(s"Found '$file' in '${cwd.getCanonicalFile}'.")
+
+        val NamePattern = """\s*name:\s*(\S+)\s*$""".r
+        val VersionPattern = """\s*version:\s*(\S+)\s*$""".r
+        val LibraryPattern = """\s*library(\s*)$""".r
+        val ExecutableWithName = """\s*executable\s*(\S+)\s*$""".r
+        val ExecutableWithoutName = """\s*executable(\s*)$""".r
+        val TestSuiteWithName = """\s*test-suite\s*(\S+)\s*$""".r
+        val TestSuiteWithoutName = """\s*test-suite(\s*)$""".r
+
+        val cabal = IO.readLines(cwd / file).foldLeft(empty) {
+          case (info, NamePattern(projName))    => info.copy(name = projName)
+          case (info, VersionPattern(projVer))  => info.copy(version = projVer)
+          case (info, LibraryPattern(_))        => info.addArtifact(Library(NONAME))
+          case (info, ExecutableWithName(exe))  => info.addArtifact(Executable(exe))
+          case (info, ExecutableWithoutName(_)) => info.addArtifact(Executable(NONAME))
+          case (info, TestSuiteWithName(suite)) => info.addArtifact(TestSuite(suite))
+          case (info, TestSuiteWithoutName(_))  => info.addArtifact(TestSuite(NONAME))
+          case (info, _)                        => info
+        }.resolveNames
+
+        if (cabal.name == NONAME) {
+          log.error("No project name specified.")
+          empty
+        } else if (cabal.version == NOVERSION) {
+          log.error("No project version specified.")
+          empty
+        } else {
+          cabal
         }
+
       case None =>
         log.error(s"No cabal file found in '${cwd.getCanonicalFile}'.")
-        None
+        empty
     }
   }
 
   def getCabalFile(cwd: File): Option[String] = {
     cwd.listFiles.map(_.getName).find(_.matches(""".*\.cabal$"""))
-  }
-
-  private def getCabalLines(cwd: File, cabal: String): Iterator[String] = {
-    Source.fromFile(cwd / cabal).getLines
-  }
-
-  private def parseProjectName(cwd: File, cabal: String): Option[String] = {
-    getCabalLines(cwd, cabal)
-      .filter(_.matches("""\s*name:\s*\S+\s*$"""))
-      .toSeq
-      .headOption
-      .map(_.split(":")(1))
-      .map(_.trim)
-  }
-
-  private def parseProjectVersion(cwd: File, cabal: String): Option[String] = {
-    getCabalLines(cwd, cabal)
-      .filter(_.matches("""\s*version:\s*\S+\s*$"""))
-      .toSeq
-      .headOption
-      .map(_.split(":")(1))
-      .map(_.trim)
-  }
-
-  private def parseArtifacts(cwd: File, cabal: String, proj: String): Seq[Artifact] = {
-    val LibraryPattern = """\s*library(\s*)$""".r
-    val ExecutableWithName = """\s*executable\s*(\S+)\s*$""".r
-    val ExecutableWithoutName = """\s*executable(\s*)$""".r
-    val TestSuiteWithName = """\s*test-suite\s*(\S+)\s*$""".r
-    val TestSuiteWithoutName = """\s*test-suite(\s*)$""".r
-    getCabalLines(cwd, cabal).collect {
-      case LibraryPattern(_)        => Library(proj)
-      case ExecutableWithName(exe)  => Executable(exe)
-      case ExecutableWithoutName(_) => Executable(proj)
-      case TestSuiteWithName(suite) => TestSuite(suite)
-      case TestSuiteWithoutName(_)  => TestSuite(proj)
-    }.toList.sortBy {
-      case Library(_)    => 0
-      case Executable(_) => 1
-      case TestSuite(_)  => 2
-    }
-  }
-
-  def getArtifacts(cwd: File, log: Logger, filter: Artifact.Filter): Seq[Artifact] = {
-    parseCabal(cwd, log).map(_.artifacts.filter(filter)).getOrElse(Nil)
-  }
-
-  def hasExecutable(cwd: File, log: Logger): Boolean = {
-    getArtifacts(cwd, log, Artifact.executable).nonEmpty
-  }
-
-  def getMainClass(cwd: File, defaultMainClass: Option[String], log: Logger): Option[String] = {
-    if (hasExecutable(cwd, log)) {
-      Some("eta.main")
-    } else {
-      defaultMainClass
-    }
   }
 
 }
