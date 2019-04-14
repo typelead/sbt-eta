@@ -55,11 +55,7 @@ object SbtEta extends AutoPlugin {
     },
 
     libraryDependencies := {
-      val deps = libraryDependencies.value
-
-      //Etlas.install(etaPackageDir.value, Logger(sLog.value))
-
-      deps ++
+      libraryDependencies.value ++
         Etlas.getLibraryDependencies(etaPackageDir.value, Logger(sLog.value), Artifact.not(Artifact.testSuite)) ++
         Etlas.getLibraryDependencies(etaPackageDir.value, Logger(sLog.value), Artifact.testSuite).map(_ % Test)
     },
@@ -68,17 +64,15 @@ object SbtEta extends AutoPlugin {
       (libraryDependencies in Compile).value
       (etaCompile in Compile).value
 
-      val cp = (unmanagedJars in Compile).value
-
-      cp ++ Etlas.getFullClasspath(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.not(Artifact.testSuite))
+      (unmanagedJars in Compile).value ++
+        Etlas.getFullClasspath(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.not(Artifact.testSuite))
     },
     unmanagedJars in Test := {
       (libraryDependencies in Compile).value
       (etaCompile in Test).value
 
-      val cp = (unmanagedJars in Test).value
-
-      cp ++ Etlas.getFullClasspath(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.testSuite)
+      (unmanagedJars in Test).value ++
+        Etlas.getFullClasspath(etaPackageDir.value, etaTarget.value, Logger(streams.value), Artifact.testSuite)
     },
 
     compile in Test := {
@@ -99,7 +93,7 @@ object SbtEta extends AutoPlugin {
 
     watchSources ++= ((etaSource in Compile).value ** "*").get,
 
-    commands += etaInitCommand
+    commands ++= Seq(etaInitCommand, etaReplCommand)
   )
 
   override def projectSettings: Seq[Def.Setting[_]] = baseEtaSettings
@@ -125,6 +119,17 @@ object SbtEta extends AutoPlugin {
         )
         extracted.appendWithSession(baseEtaSettings, state)
     }
+  }
+
+  private def etaReplCommand: Command = Command.command("eta-repl") { state =>
+    val extracted = Project.extract(state)
+    Etlas.repl(
+      extracted.get(etaPackageDir),
+      extracted.get(etaTarget),
+      extracted.get(sLog)
+    ).get
+    println()
+    state
   }
 
 }
