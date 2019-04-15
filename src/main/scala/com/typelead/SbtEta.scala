@@ -21,6 +21,13 @@ object SbtEta extends AutoPlugin {
     val etlasVersion = SettingKey[String]("etlas-version", "Version of the Etlas build tool.")
     val etaCompile   = TaskKey[Unit]("eta-compile", "Build your Eta project.")
 
+    // Eta configuration DSL
+
+    val hsMain = SettingKey[Option[String]]("eta-dsl-hsMain", "Specifies main class for artifact.")
+
+    def eta(packageName: String): ModuleID = EtaDependency(packageName)
+    def eta(packageName: String, version: String): ModuleID = EtaDependency(packageName, version)
+
   }
 
   import autoImport._
@@ -48,11 +55,13 @@ object SbtEta extends AutoPlugin {
       projectDependencies in Eta := {
         Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, Logger(sLog.value), Artifact.not(Artifact.testSuite)) ++
         Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, Logger(sLog.value), Artifact.testSuite).map(_ % Test)
-      }
+      },
+      // DSL
+      libraryDependencies in Eta := Seq(EtaDependency.base)
     ) ++
       makeSettings(EtaLib, Compile, Artifact.library) ++
       makeSettings(EtaExe, Compile, Artifact.executable) ++
-      makeSettings(EtaTest, Test, Artifact.or(Artifact.library, Artifact.testSuite))
+      makeSettings(EtaTest,   Test, Artifact.or(Artifact.library, Artifact.testSuite))
   }
 
   private def makeSettings(config: Configuration, base: Configuration, filter: Cabal.Artifact.Filter): Seq[Def.Setting[_]] = {
@@ -65,7 +74,10 @@ object SbtEta extends AutoPlugin {
       },
       unmanagedClasspath in config := {
         Etlas.getClasspath(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value), filter)
-      }
+      },
+      // DSL
+      hsMain in config := None,
+      libraryDependencies in config := (libraryDependencies in Eta).value
     )
   }
 
@@ -101,20 +113,20 @@ object SbtEta extends AutoPlugin {
       update.value
     },
 
-    projectDependencies := {
-      projectDependencies.value ++ (projectDependencies in Eta).value
-    },
+    projectDependencies ++= (projectDependencies in Eta).value,
 
-    unmanagedJars in Compile := {
-      (unmanagedJars in Compile).value ++
-        (unmanagedClasspath in EtaLib).value ++
-        (exportedProductJars in EtaLib).value
-    },
-    unmanagedJars in Test := {
-      (unmanagedJars in Test).value ++
-        (unmanagedClasspath in EtaTest).value ++
-        (exportedProductJars in EtaTest).value
-    },
+    libraryDependencies in Compile ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaLib).value),
+    libraryDependencies in Compile ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaExe).value),
+    libraryDependencies in Test    ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaTest).value),
+
+    unmanagedJars in Compile ++= (unmanagedClasspath in EtaLib).value,
+    unmanagedJars in Compile ++= (exportedProductJars in EtaLib).value,
+
+    unmanagedJars in Compile ++= (unmanagedClasspath in EtaExe).value,
+    unmanagedJars in Compile ++= (exportedProductJars in EtaExe).value,
+
+    unmanagedJars in Test ++= (unmanagedClasspath in EtaTest).value,
+    unmanagedJars in Test ++= (exportedProductJars in EtaTest).value,
 
     compile in Compile := {
       (etaCompile in Compile).value
@@ -136,13 +148,11 @@ object SbtEta extends AutoPlugin {
       (mainClass in Eta).value orElse (mainClass in (Compile, packageBin)).value
     },
 
-    watchSources ++= {
-      ((sourceDirectory in EtaLib).value ** "*") +++
-      ((sourceDirectory in EtaExe).value ** "*") +++
-      ((sourceDirectory in EtaTest).value ** "*")
-    }.get,
+    watchSources ++= ((sourceDirectory in EtaLib).value ** "*").get(),
+    watchSources ++= ((sourceDirectory in EtaExe).value ** "*").get(),
+    watchSources ++= ((sourceDirectory in EtaTest).value ** "*").get(),
 
-    commands ++= Seq(etaInitCommand, etaReplCommand)
+    commands ++= Seq(etaInitCommand, etaRefreshCommand, etaReplCommand)
   )
 
   override def projectSettings: Seq[Def.Setting[_]] = baseProjectSettings
@@ -154,23 +164,20 @@ object SbtEta extends AutoPlugin {
     }
   }
 
+  private def getEtaBuildDependencies(extracted: Extracted, config: Configuration): Seq[String] = {
+    EtaDependency.getAllEtaDependencies(extracted.get(libraryDependencies in config))
+      .map(EtaDependency.toCabalDependency)
+  }
+
+  private def getEtaMavenDependencies(extracted: Extracted, config: Configuration): Seq[String] = {
+    EtaDependency.getAllMavenDependencies(extracted.get(libraryDependencies in config))
+      .map(_.toString())
+  }
+
   private def etaInitCommand: Command = Command.command("eta-init") { state =>
     val extracted = Project.extract(state)
     val cwd = extracted.get(baseDirectory in Eta)
     val log = Logger(extracted.get(sLog))
-
-    val cabal = extracted.get(etaCabal)
-    Cabal.writeCabal(
-      extracted.get(target in Eta),
-      cabal.copy(
-        projectName    = extracted.get(name) + "-eta",
-        projectVersion = extracted.get(version),
-        projectLibrary = cabal.projectLibrary.map(_.addSourceDirectories(getSourceDirectories(extracted, EtaLib))),
-        executables    = cabal.executables.map(_.addSourceDirectories(getSourceDirectories(extracted, EtaExe))),
-        testSuites     = cabal.testSuites.map(_.addSourceDirectories(getSourceDirectories(extracted, EtaTest)))
-      )
-    )
-
     Cabal.getCabalFile(cwd) match {
       case Some(file) =>
         log.warn(s"Found '$file' in '${cwd.getCanonicalPath}'. Could not initialize new Eta project.")
@@ -188,6 +195,63 @@ object SbtEta extends AutoPlugin {
         )
         extracted.appendWithSession(baseProjectSettings, state)
     }
+  }
+
+  private def etaRefreshCommand: Command = Command.command("eta-refresh") { state =>
+    val extracted = Project.extract(state)
+    val cwd = extracted.get(baseDirectory in Eta)
+    val log = Logger(extracted.get(sLog))
+
+    val projectName = extracted.get(name) + "-eta"
+    val projectVersion = extracted.get(version)
+
+    val library = Library(
+      name = projectName,
+      sourceDirectories = getSourceDirectories(extracted, EtaLib),
+      exposedModules = Nil,
+      buildDependencies = getEtaBuildDependencies(extracted, EtaLib),
+      mavenDependencies = getEtaMavenDependencies(extracted, EtaLib),
+      ghcOptions = Nil,
+      defaultLanguage = Haskell2010
+    )
+
+    val executable = extracted.get(hsMain in EtaExe).map { main =>
+      Executable(
+        name = projectName + "-exe",
+        sourceDirectories = getSourceDirectories(extracted, EtaExe),
+        exposedModules = Nil,
+        buildDependencies = getEtaBuildDependencies(extracted, EtaExe),
+        mavenDependencies = getEtaMavenDependencies(extracted, EtaExe),
+        hsMain = Some(main),
+        ghcOptions = Nil,
+        defaultLanguage = Haskell2010
+      ).addLibrary(library)
+    }
+
+    val testSuite = extracted.get(hsMain in EtaTest).map { main =>
+      TestSuite(
+        name = projectName + "-test",
+        sourceDirectories = getSourceDirectories(extracted, EtaTest),
+        exposedModules = Nil,
+        buildDependencies = getEtaBuildDependencies(extracted, EtaTest),
+        mavenDependencies = getEtaMavenDependencies(extracted, EtaTest),
+        hsMain = Some(main),
+        ghcOptions = Nil,
+        defaultLanguage = Haskell2010
+      ).addLibrary(library)
+    }
+
+    val cabal = Cabal(
+      projectName    = projectName,
+      projectVersion = projectVersion,
+      projectLibrary = Some(library),
+      executables    = executable.toList,
+      testSuites     = testSuite.toList
+    )
+
+    Cabal.writeCabal(extracted.get(target in Eta), cabal)
+
+    state
   }
 
   private def etaReplCommand: Command = Command.command("eta-repl") { state =>

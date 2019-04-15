@@ -85,8 +85,7 @@ object Cabal {
     def ghcOptions: Seq[String]
     def defaultLanguage: String
 
-    def addSourceDirectories(dirs: Seq[String]): A
-    def addLibrary(artifact: Option[Library]): A
+    def addLibrary(artifact: Library): A
   }
 
   final case class Library(override val name: String,
@@ -100,9 +99,7 @@ object Cabal {
     override def depsPackage: String = "lib:" + name
     override def hsMain: Option[String] = None
 
-
-    override def addSourceDirectories(dirs: Seq[String]): Library = this.copy(sourceDirectories = dirs)
-    override def addLibrary(artifact: Option[Library]): Library = this
+    override def addLibrary(artifact: Library): Library = this
 
   }
 
@@ -117,8 +114,7 @@ object Cabal {
 
     override def depsPackage: String = "exe:" + name
 
-    override def addSourceDirectories(dirs: Seq[String]): Executable = this.copy(sourceDirectories = dirs)
-    override def addLibrary(artifact: Option[Library]): Executable = this.copy(buildDependencies = artifact.map(_.name).toList ++ buildDependencies)
+    override def addLibrary(artifact: Library): Executable = this.copy(buildDependencies = buildDependencies :+ artifact.name)
 
   }
 
@@ -133,8 +129,7 @@ object Cabal {
 
     override def depsPackage: String = "test:" + name
 
-    override def addSourceDirectories(dirs: Seq[String]): TestSuite = this.copy(sourceDirectories = dirs)
-    override def addLibrary(artifact: Option[Library]): TestSuite = this.copy(buildDependencies = artifact.map(_.name).toList ++ buildDependencies)
+    override def addLibrary(artifact: Library): TestSuite = this.copy(buildDependencies = buildDependencies :+ artifact.name)
 
   }
 
@@ -143,8 +138,8 @@ object Cabal {
     type Filter = Artifact[_] => Boolean
 
     def lib(name: String): Library = Library(name, Nil, Nil, Nil, Nil, Nil, Haskell2010)
-    def exe(name: String): Executable = Executable(name, Nil, Nil, Nil, Nil, Some("Main.hs"), Nil, Haskell2010)
-    def test(name: String): TestSuite = TestSuite (name, Nil, Nil, Nil, Nil, Some("Spec.hs"), Nil, Haskell2010)
+    def exe(name: String): Executable = Executable(name, Nil, Nil, Nil, Nil, None, Nil, Haskell2010)
+    def test(name: String): TestSuite = TestSuite (name, Nil, Nil, Nil, Nil, None, Nil, Haskell2010)
 
     val all: Filter = _ => true
     val library: Filter = {
@@ -208,15 +203,26 @@ object Cabal {
     }
   }
 
-  def writeArtifact(artifact: Artifact[_]): Seq[String] = {
-    artifact.sourceDirectories  .mkString("  hs-source-dirs:   ", "\n                  , ", "").split("\n") ++
-      artifact.exposedModules   .mkString("  exposed-modules:  ", "\n                  , ", "").split("\n") ++
-      artifact.buildDependencies.mkString("  build-depends:    ", "\n                  , ", "").split("\n") ++
-      artifact.mavenDependencies.mkString("  maven-depends:    ", "\n                  , ", "").split("\n") ++
-      artifact.hsMain           .map(m => "  main-is:          " + m).toList ++
+  private def writeLines(lines: Traversable[String], prefix: String, separator: String): Seq[String] = {
+    if (lines.nonEmpty) (prefix + lines.head) +: lines.tail.map(separator + _).toList
+    else Nil
+  }
+
+  private def writeArtifact(artifact: Artifact[_]): Seq[String] = {
+    writeLines(artifact.sourceDirectories,
+        "  hs-source-dirs:   ", "                  , ") ++
+      writeLines(artifact.exposedModules   ,
+        "  exposed-modules:  ", "                  , ") ++
+      writeLines(artifact.buildDependencies,
+        "  build-depends:    ", "                  , ") ++
+      writeLines(artifact.mavenDependencies,
+        "  maven-depends:    ", "                  , ") ++
+      writeLines(Some(artifact.ghcOptions).filter(_.nonEmpty).map(_.mkString(" ")),
+        "  ghc-options:      ", "") ++
+      artifact.hsMain.map(m =>
+        "  main-is:          " + m).toList ++
       Seq(
-                                          "  ghc-options:      " + artifact.ghcOptions.mkString(" "),
-                                          "  default-language: " + artifact.defaultLanguage
+        "  default-language: " + artifact.defaultLanguage
       )
   }
 
@@ -240,13 +246,13 @@ object Cabal {
         Seq(
           "",
           "executable " + artifact.name
-        ) ++ writeArtifact(artifact.addLibrary(cabal.projectLibrary))
+        ) ++ writeArtifact(artifact)
       }
       val testSuiteDefs = cabal.testSuites.flatMap { artifact =>
         Seq(
           "",
           "test-suite " + artifact.name
-        ) ++ writeArtifact(artifact.addLibrary(cabal.projectLibrary))
+        ) ++ writeArtifact(artifact)
       }
       IO.writeLines(cwd / cabal.cabalName, headers ++ libraryDefs ++ executableDefs ++ testSuiteDefs)
     }
