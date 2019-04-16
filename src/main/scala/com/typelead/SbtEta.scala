@@ -150,9 +150,9 @@ object SbtEta extends AutoPlugin {
 
     projectDependencies ++= (projectDependencies in Eta).value,
 
-    libraryDependencies in Compile ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaLib).value),
-    libraryDependencies in Compile ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaExe).value),
-    libraryDependencies in Test    ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaTest).value),
+    libraryDependencies ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaLib).value),
+    libraryDependencies ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaExe).value),
+    libraryDependencies ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaTest).value).map(_ % Test),
 
     unmanagedJars in Compile ++= (unmanagedClasspath in EtaLib).value,
     unmanagedJars in Compile ++= (exportedProductJars in EtaLib).value,
