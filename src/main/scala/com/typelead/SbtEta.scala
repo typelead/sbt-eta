@@ -24,9 +24,18 @@ object SbtEta extends AutoPlugin {
     // Eta configuration DSL
 
     val hsMain = SettingKey[Option[String]]("eta-dsl-hsMain", "Specifies main class for artifact.")
+    val language = SettingKey[String]("eta-dsl-language", "Specifies the language to use for the build.")
+    val extensions = SettingKey[Seq[String]]("eta-dsl-extensions", "The set of language extensions to enable or disable for the build.")
+    val cppOptions = SettingKey[Seq[String]]("eta-dsl-cppOptions", "The flags to send to the preprocessor used by the Eta compiler to preprocess files that enable the CPP extension.")
+    val ghcOptions = SettingKey[Seq[String]]("eta-dsl-ghcOptions", "The direct flags to send to the Eta compiler.")
+    val includeDirs = SettingKey[Seq[File]]("eta-dsl-includeDirs", "Paths to directories which contain include files that can later be referenced with `#include` directives.")
+    val installIncludes = SettingKey[Seq[String]]("eta-dsl-installIncludes", "Names of include files to install along with the package being built.")
 
     def eta(packageName: String): ModuleID = EtaDependency(packageName)
     def eta(packageName: String, version: String): ModuleID = EtaDependency(packageName, version)
+
+    val Haskell98 = "Haskell98"
+    val Haskell2010 = "Haskell2010"
 
   }
 
@@ -57,6 +66,12 @@ object SbtEta extends AutoPlugin {
         Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, Logger(sLog.value), Artifact.testSuite).map(_ % Test)
       },
       // DSL
+      language in Eta := Haskell2010,
+      extensions in Eta := Nil,
+      cppOptions in Eta := Nil,
+      ghcOptions in Eta := Nil,
+      includeDirs in Eta := Nil,
+      installIncludes in Eta := Nil,
       libraryDependencies in Eta := Seq(EtaDependency.base)
     ) ++
       makeSettings(EtaLib, Compile, Artifact.library) ++
@@ -77,6 +92,12 @@ object SbtEta extends AutoPlugin {
       },
       // DSL
       hsMain in config := None,
+      language in config := (language in Eta).value,
+      extensions in config := (extensions in Eta).value,
+      cppOptions in config := (cppOptions in Eta).value,
+      ghcOptions in config := (ghcOptions in Eta).value,
+      includeDirs in config := (includeDirs in Eta).value,
+      installIncludes in config := (installIncludes in Eta).value,
       libraryDependencies in config := (libraryDependencies in Eta).value
     )
   }
@@ -158,9 +179,9 @@ object SbtEta extends AutoPlugin {
   override def projectSettings: Seq[Def.Setting[_]] = baseProjectSettings
   override def projectConfigurations: Seq[Configuration] = Seq(Eta, EtaLib, EtaExe, EtaTest)
 
-  private def getSourceDirectories(extracted: Extracted, config: Configuration): Seq[String] = {
-    extracted.get(sourceDirectories in config).flatMap { dir =>
-      IO.relativize(extracted.get(baseDirectory in Eta), dir)
+  private def getFilePaths(extracted: Extracted, key: SettingKey[Seq[File]], config: Configuration): Seq[String] = {
+    extracted.get(key in config).map { file =>
+      IO.relativize(extracted.get(baseDirectory in Eta), file).getOrElse(file.getCanonicalPath)
     }
   }
 
@@ -207,37 +228,49 @@ object SbtEta extends AutoPlugin {
 
     val library = Library(
       name = projectName,
-      sourceDirectories = getSourceDirectories(extracted, EtaLib),
+      sourceDirectories = getFilePaths(extracted, sourceDirectories, EtaLib),
       exposedModules = Nil,
       buildDependencies = getEtaBuildDependencies(extracted, EtaLib),
       mavenDependencies = getEtaMavenDependencies(extracted, EtaLib),
-      ghcOptions = Nil,
-      defaultLanguage = Haskell2010
+      cppOptions = extracted.get(cppOptions in EtaLib),
+      ghcOptions = extracted.get(ghcOptions in EtaLib),
+      extensions = extracted.get(extensions in EtaLib),
+      includeDirs = getFilePaths(extracted, includeDirs, EtaLib),
+      installIncludes = extracted.get(installIncludes in EtaLib),
+      language = extracted.get(language in EtaLib)
     )
 
     val executable = extracted.get(hsMain in EtaExe).map { main =>
       Executable(
         name = projectName + "-exe",
-        sourceDirectories = getSourceDirectories(extracted, EtaExe),
+        sourceDirectories = getFilePaths(extracted, sourceDirectories, EtaExe),
         exposedModules = Nil,
         buildDependencies = getEtaBuildDependencies(extracted, EtaExe),
         mavenDependencies = getEtaMavenDependencies(extracted, EtaExe),
         hsMain = Some(main),
-        ghcOptions = Nil,
-        defaultLanguage = Haskell2010
+        cppOptions = extracted.get(cppOptions in EtaExe),
+        ghcOptions = extracted.get(ghcOptions in EtaExe),
+        extensions = extracted.get(extensions in EtaExe),
+        includeDirs = getFilePaths(extracted, includeDirs, EtaExe),
+        installIncludes = extracted.get(installIncludes in EtaExe),
+        language = extracted.get(language in EtaExe)
       ).addLibrary(library)
     }
 
     val testSuite = extracted.get(hsMain in EtaTest).map { main =>
       TestSuite(
         name = projectName + "-test",
-        sourceDirectories = getSourceDirectories(extracted, EtaTest),
+        sourceDirectories = getFilePaths(extracted, sourceDirectories, EtaTest),
         exposedModules = Nil,
         buildDependencies = getEtaBuildDependencies(extracted, EtaTest),
         mavenDependencies = getEtaMavenDependencies(extracted, EtaTest),
         hsMain = Some(main),
-        ghcOptions = Nil,
-        defaultLanguage = Haskell2010
+        cppOptions = extracted.get(cppOptions in EtaTest),
+        ghcOptions = extracted.get(ghcOptions in EtaTest),
+        extensions = extracted.get(extensions in EtaTest),
+        includeDirs = getFilePaths(extracted, includeDirs, EtaTest),
+        installIncludes = extracted.get(installIncludes in EtaTest),
+        language = extracted.get(language in EtaTest)
       ).addLibrary(library)
     }
 

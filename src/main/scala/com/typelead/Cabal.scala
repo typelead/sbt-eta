@@ -71,9 +71,6 @@ object Cabal {
     testSuites = Nil
   )
 
-  val Haskell98   = "Haskell98"
-  val Haskell2010 = "Haskell2010"
-
   sealed trait Artifact[A <: Artifact[A]] {
     def name: String
     def depsPackage: String
@@ -82,8 +79,12 @@ object Cabal {
     def buildDependencies: Seq[String]
     def mavenDependencies: Seq[String]
     def hsMain: Option[String]
+    def cppOptions: Seq[String]
     def ghcOptions: Seq[String]
-    def defaultLanguage: String
+    def includeDirs: Seq[String]
+    def installIncludes: Seq[String]
+    def extensions: Seq[String]
+    def language: String
 
     def addLibrary(artifact: Library): A
   }
@@ -93,8 +94,12 @@ object Cabal {
                            override val exposedModules: Seq[String],
                            override val buildDependencies: Seq[String],
                            override val mavenDependencies: Seq[String],
+                           override val cppOptions: Seq[String],
                            override val ghcOptions: Seq[String],
-                           override val defaultLanguage: String) extends Artifact[Library] {
+                           override val includeDirs: Seq[String],
+                           override val installIncludes: Seq[String],
+                           override val extensions: Seq[String],
+                           override val language: String) extends Artifact[Library] {
 
     override def depsPackage: String = "lib:" + name
     override def hsMain: Option[String] = None
@@ -109,8 +114,12 @@ object Cabal {
                               override val buildDependencies: Seq[String],
                               override val mavenDependencies: Seq[String],
                               override val hsMain: Option[String],
+                              override val cppOptions: Seq[String],
                               override val ghcOptions: Seq[String],
-                              override val defaultLanguage: String) extends Artifact[Executable] {
+                              override val includeDirs: Seq[String],
+                              override val installIncludes: Seq[String],
+                              override val extensions: Seq[String],
+                              override val language: String) extends Artifact[Executable] {
 
     override def depsPackage: String = "exe:" + name
 
@@ -124,8 +133,12 @@ object Cabal {
                              override val buildDependencies: Seq[String],
                              override val mavenDependencies: Seq[String],
                              override val hsMain: Option[String],
+                             override val cppOptions: Seq[String],
                              override val ghcOptions: Seq[String],
-                             override val defaultLanguage: String) extends Artifact[TestSuite] {
+                             override val includeDirs: Seq[String],
+                             override val installIncludes: Seq[String],
+                             override val extensions: Seq[String],
+                             override val language: String) extends Artifact[TestSuite] {
 
     override def depsPackage: String = "test:" + name
 
@@ -137,9 +150,9 @@ object Cabal {
 
     type Filter = Artifact[_] => Boolean
 
-    def lib(name: String): Library = Library(name, Nil, Nil, Nil, Nil, Nil, Haskell2010)
-    def exe(name: String): Executable = Executable(name, Nil, Nil, Nil, Nil, None, Nil, Haskell2010)
-    def test(name: String): TestSuite = TestSuite (name, Nil, Nil, Nil, Nil, None, Nil, Haskell2010)
+    def lib(name: String) : Library    = Library   (name, Nil, Nil, Nil, Nil,       Nil, Nil, Nil, Nil, Nil, "Haskell2010")
+    def exe(name: String) : Executable = Executable(name, Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
+    def test(name: String): TestSuite  = TestSuite (name, Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
 
     val all: Filter = _ => true
     val library: Filter = {
@@ -209,20 +222,28 @@ object Cabal {
   }
 
   private def writeArtifact(artifact: Artifact[_]): Seq[String] = {
-    writeLines(artifact.sourceDirectories,
-        "  hs-source-dirs:   ", "                  , ") ++
+    artifact.hsMain.map(m =>
+      "  main-is:            " + m).toList ++
+      writeLines(artifact.sourceDirectories,
+        "  hs-source-dirs:     ", "                    , ") ++
       writeLines(artifact.exposedModules   ,
-        "  exposed-modules:  ", "                  , ") ++
+        "  exposed-modules:    ", "                    , ") ++
       writeLines(artifact.buildDependencies,
-        "  build-depends:    ", "                  , ") ++
+        "  build-depends:      ", "                    , ") ++
       writeLines(artifact.mavenDependencies,
-        "  maven-depends:    ", "                  , ") ++
+        "  maven-depends:      ", "                    , ") ++
+      writeLines(Some(artifact.cppOptions).filter(_.nonEmpty).map(_.mkString(" ")),
+        "  cpp-options:        ", "                    , ") ++
       writeLines(Some(artifact.ghcOptions).filter(_.nonEmpty).map(_.mkString(" ")),
-        "  ghc-options:      ", "") ++
-      artifact.hsMain.map(m =>
-        "  main-is:          " + m).toList ++
+        "  ghc-options:        ", "") ++
+      writeLines(artifact.includeDirs,
+        "  include-dirs:       ", "                    , ") ++
+      writeLines(artifact.installIncludes,
+        "  install-includes:   ", "                    , ") ++
+      writeLines(artifact.extensions,
+        "  default-extensions: ", "                    , ") ++
       Seq(
-        "  default-language: " + artifact.defaultLanguage
+        "  default-language:   " + artifact.language
       )
   }
 
