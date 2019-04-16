@@ -83,7 +83,7 @@ object Etlas {
     args ++ Seq("--builddir", dist.getCanonicalPath)
   }
 
-  def build(cwd: File, dist: File, log: Logger): Unit = {
+  def build(cabal: Cabal, cwd: File, dist: File, log: Logger): Unit = {
     etlas(withBuildDir(Seq("build"), dist), cwd, log, filterLog = _ => true)
     ()
   }
@@ -99,9 +99,9 @@ object Etlas {
     ()
   }
 
-  def deps(cabal: Cabal, cwd: File, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
+  def deps(cabal: Cabal, cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
     cabal.getArtifacts(filter).flatMap { artifact =>
-      etlas(Seq("deps", artifact.depsPackage, "--keep-going"), cwd, log, saveOutput = true)
+      etlas(withBuildDir(Seq("deps", artifact.depsPackage, "--keep-going"), dist), cwd, log, saveOutput = true)
     }
   }
 
@@ -204,14 +204,14 @@ object Etlas {
     } yield module
   }
 
-  def getMavenDependencies(cabal: Cabal, cwd: File, log: Logger, filter: Cabal.Artifact.Filter): Seq[ModuleID] = {
+  def getMavenDependencies(cabal: Cabal, cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter): Seq[ModuleID] = {
     log.info("Checking Maven dependencies...")
-    parseMavenDeps(Etlas.deps(cabal, cwd, log, filter))
+    parseMavenDeps(Etlas.deps(cabal, cwd, dist, log, filter))
   }
 
   def getClasspath(cabal: Cabal, cwd: File, dist: File, log: Logger, filter: Cabal.Artifact.Filter): Classpath = {
     log.info("Retrieving Eta dependency jar paths...")
-    parseDeps(Etlas.deps(cabal, cwd, log, filter))
+    parseDeps(Etlas.deps(cabal, cwd, dist, log, filter))
       .map(s => PathFinder(file(s)))
       .foldLeft(PathFinder.empty)((s1, s2) => s1 +++ s2)
       .classpath

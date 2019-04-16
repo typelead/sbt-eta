@@ -18,9 +18,24 @@ object EtaDependency {
   def getAllMavenDependencies(dependencies: Seq[ModuleID]): Seq[ModuleID] =
     dependencies.filterNot(isEtaDependency).distinct
 
+  def getPackageVersion(version: String): String = {
+    val Pattern = """^([0-9.]+)([0-9a-zA-Z-]+)(.*)""".r
+    version match {
+      case Pattern(_, _, tail) if tail.nonEmpty =>
+        sys.error("Wrong version string: " + version)
+      case Pattern(ver, "-SNAPSHOT", _) =>
+        parseVersion(ver).addPart(0).toString
+      case Pattern(ver, _, _) =>
+        parseVersion(ver).toString
+      case _ =>
+        sys.error("Wrong version string: " + version)
+    }
+  }
+
   // Version ranges
 
   case class Version(parts: Seq[Int]) {
+    def addPart(part: Int): Version = this.copy(parts = parts :+ part)
     def increment: Version = {
       if (parts.isEmpty) this
       else Version(parts.init :+ (parts.last + 1))

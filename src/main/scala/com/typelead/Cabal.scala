@@ -1,6 +1,5 @@
 package com.typelead
 
-import sbt.Keys._
 import sbt._
 
 final case class Cabal(projectName: String,
@@ -18,7 +17,7 @@ final case class Cabal(projectName: String,
     case _: Cabal.Executable => 1
     case _: Cabal.TestSuite  => 2
   }
-  def getArtifactsJars(dist: File, etaVersion: String, filter: Cabal.Artifact.Filter): Classpath = {
+  def getArtifactsJars(dist: File, etaVersion: String, filter: Cabal.Artifact.Filter): Seq[File] = {
     val buildPath = dist / "build" / ("eta-" + etaVersion) / packageId
     getArtifacts(filter).map {
       case _: Cabal.Library =>
@@ -27,7 +26,7 @@ final case class Cabal(projectName: String,
         buildPath / "x" / a.name / "build" / a.name / (a.name + ".jar")
       case a: Cabal.TestSuite =>
         buildPath / "t" / a.name / "build" / a.name / (a.name + ".jar")
-    }.flatMap(jar => PathFinder(jar).classpath)
+    }
   }
 
   def getMainClass: Option[String] = {
@@ -71,6 +70,11 @@ object Cabal {
     testSuites = Nil
   )
 
+  object TestSuiteTypes extends Enumeration {
+    val exitcode: Value = Value("exitcode-stdio-1.0")
+    val detailed: Value = Value("detailed-0.9")
+  }
+
   sealed trait Artifact[A <: Artifact[A]] {
     def name: String
     def depsPackage: String
@@ -101,8 +105,8 @@ object Cabal {
                            override val extensions: Seq[String],
                            override val language: String) extends Artifact[Library] {
 
-    override def depsPackage: String = "lib:" + name
-    override def hsMain: Option[String] = None
+    override val depsPackage: String = "lib:" + name
+    override val hsMain: Option[String] = None
 
     override def addLibrary(artifact: Library): Library = this
 
@@ -110,7 +114,6 @@ object Cabal {
 
   final case class Executable(override val name: String,
                               override val sourceDirectories: Seq[String],
-                              override val exposedModules: Seq[String],
                               override val buildDependencies: Seq[String],
                               override val mavenDependencies: Seq[String],
                               override val hsMain: Option[String],
@@ -121,7 +124,8 @@ object Cabal {
                               override val extensions: Seq[String],
                               override val language: String) extends Artifact[Executable] {
 
-    override def depsPackage: String = "exe:" + name
+    override val depsPackage: String = "exe:" + name
+    override val exposedModules: Seq[String] = Nil
 
     override def addLibrary(artifact: Library): Executable = this.copy(buildDependencies = buildDependencies :+ artifact.name)
 
@@ -129,7 +133,6 @@ object Cabal {
 
   final case class TestSuite(override val name: String,
                              override val sourceDirectories: Seq[String],
-                             override val exposedModules: Seq[String],
                              override val buildDependencies: Seq[String],
                              override val mavenDependencies: Seq[String],
                              override val hsMain: Option[String],
@@ -138,9 +141,11 @@ object Cabal {
                              override val includeDirs: Seq[String],
                              override val installIncludes: Seq[String],
                              override val extensions: Seq[String],
-                             override val language: String) extends Artifact[TestSuite] {
+                             override val language: String,
+                             testSuiteType: TestSuiteTypes.Value) extends Artifact[TestSuite] {
 
-    override def depsPackage: String = "test:" + name
+    override val depsPackage: String = "test:" + name
+    override val exposedModules: Seq[String] = Nil
 
     override def addLibrary(artifact: Library): TestSuite = this.copy(buildDependencies = buildDependencies :+ artifact.name)
 
@@ -151,8 +156,8 @@ object Cabal {
     type Filter = Artifact[_] => Boolean
 
     def lib(name: String) : Library    = Library   (name, Nil, Nil, Nil, Nil,       Nil, Nil, Nil, Nil, Nil, "Haskell2010")
-    def exe(name: String) : Executable = Executable(name, Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
-    def test(name: String): TestSuite  = TestSuite (name, Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
+    def exe(name: String) : Executable = Executable(name, Nil,      Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
+    def test(name: String): TestSuite  = TestSuite (name, Nil,      Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010", TestSuiteTypes.exitcode)
 
     val all: Filter = _ => true
     val library: Filter = {
@@ -176,9 +181,9 @@ object Cabal {
 
   def parseCabal(cwd: File, log: Logger): Cabal = {
     getCabalFile(cwd) match {
-      case Some(file) =>
+      case Some(cabalName) =>
 
-        log.info(s"Found '$file' in '${cwd.getCanonicalFile}'.")
+        log.info(s"Found '$cabalName' in '${cwd.getCanonicalFile}'.")
 
         val NamePattern = """\s*name:\s*(\S+)\s*$""".r
         val VersionPattern = """\s*version:\s*(\S+)\s*$""".r
@@ -188,7 +193,7 @@ object Cabal {
         val TestSuiteWithName = """\s*test-suite\s*(\S+)\s*$""".r
         val TestSuiteWithoutName = """\s*test-suite(\s*)$""".r
 
-        val cabal = IO.readLines(cwd / file).foldLeft(empty) {
+        val cabal = IO.readLines(cwd / cabalName).foldLeft(empty) {
           case (info, NamePattern(projName))    => info.copy(projectName = projName)
           case (info, VersionPattern(projVer))  => info.copy(projectVersion = projVer)
           case (info, LibraryPattern(_))        => info.copy(projectLibrary = Some(Artifact.lib(NONAME)))
@@ -206,7 +211,6 @@ object Cabal {
           log.error("No project version specified.")
           empty
         } else {
-          log.info(cabal.toString)
           cabal
         }
 
@@ -216,14 +220,29 @@ object Cabal {
     }
   }
 
+  private def getMainTag[A <: Artifact[A]](artifact: Artifact[A]): String = artifact match {
+    case t: TestSuite if t.testSuiteType == TestSuiteTypes.exitcode =>
+      "  main-is:            "
+    case t: TestSuite if t.testSuiteType == TestSuiteTypes.detailed =>
+      "  test-module:        "
+    case _ =>
+      "  main-is:            "
+  }
+
   private def writeLines(lines: Traversable[String], prefix: String, separator: String): Seq[String] = {
     if (lines.nonEmpty) (prefix + lines.head) +: lines.tail.map(separator + _).toList
     else Nil
   }
 
-  private def writeArtifact(artifact: Artifact[_]): Seq[String] = {
-    artifact.hsMain.map(m =>
-      "  main-is:            " + m).toList ++
+  private def writeArtifact[A <: Artifact[A]](artifact: Artifact[A]): Seq[String] = {
+    val lines = artifact match {
+      case t: TestSuite =>
+        Seq("  type:               " + t.testSuiteType.toString)
+      case _ =>
+        Nil
+    }
+    lines ++
+      artifact.hsMain.map(m => getMainTag(artifact) + m).toList ++
       writeLines(artifact.sourceDirectories,
         "  hs-source-dirs:     ", "                    , ") ++
       writeLines(artifact.exposedModules   ,
@@ -247,15 +266,18 @@ object Cabal {
       )
   }
 
-  def writeCabal(cwd: File, cabal: Cabal): Unit = {
+  def writeCabal(cwd: File, cabal: Cabal, log: Logger): Cabal = {
     if (cabal.isEmpty) {
       sys.error("The Eta project is not properly configured.")
     } else {
+
+      log.info(s"Rewrite '${cabal.cabalName}' in '${cwd.getCanonicalFile}'.")
+
       val headers = Seq(
         "name:          " + cabal.projectName,
         "version:       " + cabal.projectVersion,
-        "cabal-version: >= 1.10",
         "build-type:    Simple",
+        "cabal-version: >= 1.10"
       )
       val libraryDefs = cabal.projectLibrary.map { artifact =>
         Seq(
@@ -275,7 +297,11 @@ object Cabal {
           "test-suite " + artifact.name
         ) ++ writeArtifact(artifact)
       }
-      IO.writeLines(cwd / cabal.cabalName, headers ++ libraryDefs ++ executableDefs ++ testSuiteDefs)
+      val lines = headers ++ libraryDefs ++ executableDefs ++ testSuiteDefs
+
+      IO.writeLines(cwd / cabal.cabalName, lines)
+
+      cabal
     }
   }
 
