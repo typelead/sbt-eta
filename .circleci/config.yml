@@ -10,7 +10,7 @@ jobs:
     - run: 
         name: Running the sbt example
         working_directory: example
-        command: sbt run
+        command: sbt test run
 
 workflows:
   version: 2
