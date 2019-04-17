@@ -2,6 +2,7 @@ package com.typelead
 
 import sbt.Keys._
 import sbt.{Def, _}
+import EtaDependency.EtaVersion
 
 object SbtEta extends AutoPlugin {
 
@@ -55,21 +56,21 @@ object SbtEta extends AutoPlugin {
       target in Eta := target.value / "eta" / "dist",
       // Standard tasks
       clean in Eta := {
-        Etlas.clean((baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value))
+        Etlas.clean((baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value))
       },
       run in Eta := {
-        Etlas.runArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value), Cabal.Artifact.all)
+        Etlas.runArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value), Cabal.Artifact.all)
       },
       test in Eta := {
-        Etlas.testArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value), Cabal.Artifact.all)
+        Etlas.testArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value), Cabal.Artifact.all)
       },
       mainClass in Eta := {
         (etaCompile in Compile).value
         etaCabal.value.getMainClass
       },
       projectDependencies in Eta := {
-        Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(sLog.value), Artifact.not(Artifact.testSuite)) ++
-        Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(sLog.value), Artifact.testSuite).map(_ % Test)
+        Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(sLog.value), Artifact.not(Artifact.testSuite)) ++
+        Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(sLog.value), Artifact.testSuite).map(_ % Test)
       },
       // DSL
       useLocalCabal in Eta := false,
@@ -94,13 +95,13 @@ object SbtEta extends AutoPlugin {
       exportedProductJars in config := {
         val log = Logger(streams.value)
         (etaCompile in base).value
-        etaCabal.value.getArtifactsJars((target in Eta).value, (etaVersion in Eta).value, filter).flatMap { jar =>
+        etaCabal.value.getArtifactsJars((target in Eta).value, EtaVersion(etaVersion.value), filter).flatMap { jar =>
           log.info("Eta artifact JAR: " + jar.getCanonicalPath)
           PathFinder(jar).classpath
         }
       },
       unmanagedClasspath in config := {
-        Etlas.getClasspath(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value), filter)
+        Etlas.getClasspath(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value), filter)
       },
       // DSL
       hsMain in config := None,
@@ -131,10 +132,10 @@ object SbtEta extends AutoPlugin {
     },
 
     etaCompile in Compile := {
-      Etlas.build(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value))
+      Etlas.build(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value))
     },
     etaCompile in Test := {
-      Etlas.buildArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, Logger(streams.value), Artifact.testSuite)
+      Etlas.buildArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value), Artifact.testSuite)
     },
 
     // Standard tasks override
@@ -316,6 +317,7 @@ object SbtEta extends AutoPlugin {
     Etlas.repl(
       extracted.get(baseDirectory in Eta),
       extracted.get(target in Eta),
+      EtaVersion(extracted.get(etaVersion)),
       extracted.get(sLog)
     ).get
     println()

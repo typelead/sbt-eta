@@ -9,8 +9,8 @@ object EtaDependency {
 
   private val isEtaDependency: ModuleID => Boolean = _.organization == ETA_ORG_INTERNAL
 
-  def apply(packageName: String): ModuleID = apply(packageName, EtaDependency.LATEST_VERSION)
-  def apply(packageName: String, version: String): ModuleID = EtaDependency.ETA_ORG_INTERNAL % packageName % version
+  def apply(packageName: String): ModuleID = apply(packageName, LATEST_VERSION)
+  def apply(packageName: String, version: String): ModuleID = ETA_ORG_INTERNAL % packageName % version
 
   def getAllEtaDependencies(dependencies: Seq[ModuleID]): Seq[ModuleID] =
     dependencies.filter(isEtaDependency).distinct
@@ -30,6 +30,25 @@ object EtaDependency {
       case _ =>
         sys.error("Wrong version string: " + version)
     }
+  }
+
+  // Eta version
+
+  final case class EtaVersion(private val underlying: String) {
+
+    val friendlyVersion: String = {
+      if (underlying.contains("b")) {
+        underlying
+      } else {
+        val parts = underlying.split("\\.")
+        parts.init.mkString(".") + "b" + parts.last
+      }
+    }
+
+    val machineVersion: String = {
+      underlying.replace("b", ".")
+    }
+
   }
 
   // Version ranges

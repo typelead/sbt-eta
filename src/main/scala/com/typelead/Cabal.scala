@@ -1,6 +1,7 @@
 package com.typelead
 
 import sbt._
+import EtaDependency.EtaVersion
 
 final case class Cabal(projectName: String,
                        projectVersion: String,
@@ -17,8 +18,8 @@ final case class Cabal(projectName: String,
     case _: Cabal.Executable => 1
     case _: Cabal.TestSuite  => 2
   }
-  def getArtifactsJars(dist: File, etaVersion: String, filter: Cabal.Artifact.Filter): Seq[File] = {
-    val buildPath = dist / "build" / ("eta-" + etaVersion) / packageId
+  def getArtifactsJars(dist: File, etaVersion: EtaVersion, filter: Cabal.Artifact.Filter): Seq[File] = {
+    val buildPath = dist / "build" / ("eta-" + etaVersion.machineVersion) / packageId
     getArtifacts(filter).map {
       case _: Cabal.Library =>
         buildPath / "build" / (packageId + "-inplace.jar")
