@@ -18,4 +18,4 @@ lazy val root = (project in file(".")).
       eta("hspec")
     ),
     extensions in EtaLib += "OverloadedStrings"
-  ).disablePlugins(EtaLayoutPlugin)
+  )
