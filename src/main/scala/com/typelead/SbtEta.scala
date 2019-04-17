@@ -47,11 +47,11 @@ object SbtEta extends AutoPlugin {
 
   import autoImport._
 
-  private val etaCabal = TaskKey[Cabal]("eta-cabal", "Structure of .cabal file.")
+  private val etaCabal = TaskKey[Cabal]("eta-cabal", "Structure of the .cabal file.")
 
   private val baseEtaSettings: Seq[Def.Setting[_]] = {
     Seq(
-      baseDirectory in Eta := baseDirectory.value,
+      baseDirectory in Eta := target.value / "eta",
       target in Eta := target.value / "eta" / "dist",
       // Standard tasks
       clean in Eta := {
@@ -104,7 +104,7 @@ object SbtEta extends AutoPlugin {
       },
       // DSL
       hsMain in config := None,
-      exposedModules := Nil,
+      exposedModules in config := Nil,
       language in config := (language in Eta).value,
       extensions in config := (extensions in Eta).value,
       cppOptions in config := (cppOptions in Eta).value,
@@ -213,7 +213,7 @@ object SbtEta extends AutoPlugin {
     val cwd = extracted.get(baseDirectory in Eta)
 
     val cabal = if (extracted.get(useLocalCabal in Eta)) {
-      log.info("Flag `useLocalCabal in Eta` set to `false`. Uses local .cabal file in root folder.")
+      log.info("Flag `useLocalCabal in Eta` set to `true`. Uses local .cabal file in root folder.")
       Cabal.parseCabal(cwd, log)
     } else {
       val projectName = extracted.get(name) + "-eta"

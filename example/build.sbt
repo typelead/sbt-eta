@@ -13,7 +13,7 @@ lazy val root = (project in file(".")).
       eta("text"),
       "com.google.guava" % "guava" % "25.0-jre"
     ),
-    hsMain in EtaTest := Some("TransformSpec.hs"),
+    hsMain in EtaTest := Some("Example/TransformSpec.hs"),
     libraryDependencies in EtaTest ++= Seq(
       eta("hspec")
     ),
