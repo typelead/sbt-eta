@@ -52,7 +52,7 @@ object Etlas {
     }
 
     logCmd(s"Running `etlas ${args.mkString(" ")} in '$cwd'`...")(log)
-    val exitCode = Process("etlas" +: args, cwd) ! logger
+    val exitCode = synchronized(Process("etlas" +: args, cwd) ! logger)
 
     if (exitCode != 0) {
       sys.error("\n\n[etlas] Exit Failure " ++ exitCode.toString)
@@ -101,13 +101,14 @@ object Etlas {
   }
 
   def deps(cabal: Cabal, cwd: File, dist: File, etaVersion: EtaVersion, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
+    def filterDepsLog(s: String): Boolean = defaultFilterLog(s) || !(s.startsWith("dependency") || s.startsWith("maven-dependencies"))
     cabal.getArtifacts(filter).flatMap { artifact =>
-      etlas(Seq("deps", artifact.depsPackage, "--keep-going").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, saveOutput = true)
+      etlas(Seq("deps", artifact.depsPackage, "--keep-going").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, saveOutput = true, filterLog = filterDepsLog)
     }
   }
 
-  def etaVersion(cwd: File, log: Logger): String = {
-    etlas(Seq("exec", "eta", "--", "--numeric-version"), cwd, log, saveOutput = true).head
+  def etaVersion(cwd: File, log: Logger): EtaVersion = {
+    EtaVersion(etlas(Seq("exec", "eta", "--", "--numeric-version"), cwd, log, saveOutput = true).head)
   }
 
   def etlasVersion(cwd: File, log: Logger): String = {

@@ -34,9 +34,19 @@ object SbtEta extends AutoPlugin {
     val includeDirs = SettingKey[Seq[File]]("eta-dsl-includeDirs", "Paths to directories which contain include files that can later be referenced with `#include` directives.")
     val installIncludes = SettingKey[Seq[String]]("eta-dsl-installIncludes", "Names of include files to install along with the package being built.")
     val testSuiteType = SettingKey[Cabal.TestSuiteTypes.Value]("eta-dsl-testSuiteType", "The interface type and version of the test suite.")
+    val gitDependencies = SettingKey[Seq[GitDependency]]("eta-dsl-gitDependencies", "List of external dependencies, which are build and installed from Git.")
 
     def eta(packageName: String): ModuleID = EtaDependency(packageName)
     def eta(packageName: String, version: String): ModuleID = EtaDependency(packageName, version)
+
+    def branch(branch: String): GitDependency.Resolver = GitDependency.Branch(branch)
+    def commit(commit: String): GitDependency.Resolver = GitDependency.Commit(commit)
+    def tag(tag: String)      : GitDependency.Resolver = GitDependency.Tag(tag)
+
+    def git(packageName: String, location: String, resolver: GitDependency.Resolver): GitDependency =
+      GitDependency(packageName, location, resolver, None)
+    def git(packageName: String, location: String, resolver: GitDependency.Resolver, subDir: String) =
+      GitDependency(packageName, location, resolver, Some(subDir))
 
     val Haskell98 = "Haskell98"
     val Haskell2010 = "Haskell2010"
@@ -81,7 +91,8 @@ object SbtEta extends AutoPlugin {
       includeDirs in Eta := Nil,
       installIncludes in Eta := Nil,
       testSuiteType in Eta := exitcodeTestSuite,
-      libraryDependencies in Eta := Seq(EtaDependency.base)
+      libraryDependencies in Eta := Seq(EtaDependency.base),
+      gitDependencies in Eta := Nil
     ) ++
       makeSettings(EtaLib, Compile, Artifact.library) ++
       makeSettings(EtaExe, Compile, Artifact.executable) ++
@@ -113,7 +124,8 @@ object SbtEta extends AutoPlugin {
       includeDirs in config := (includeDirs in Eta).value,
       installIncludes in config := (installIncludes in Eta).value,
       testSuiteType in config := (testSuiteType in Eta).value,
-      libraryDependencies in config := (libraryDependencies in Eta).value
+      libraryDependencies in config := (libraryDependencies in Eta).value,
+      gitDependencies in config := (gitDependencies in Eta).value
     )
   }
 
@@ -125,7 +137,7 @@ object SbtEta extends AutoPlugin {
       refreshCabal(Project.extract(state.value), Logger(sLog.value))
     },
     etaVersion := {
-      Etlas.etaVersion((baseDirectory in Eta).value, Logger(sLog.value))
+      Etlas.etaVersion((baseDirectory in Eta).value, Logger(sLog.value)).friendlyVersion
     },
     etlasVersion := {
       Etlas.etlasVersion((baseDirectory in Eta).value, Logger(sLog.value))
@@ -226,6 +238,7 @@ object SbtEta extends AutoPlugin {
         exposedModules = extracted.get(exposedModules in EtaLib),
         buildDependencies = getEtaBuildDependencies(extracted, EtaLib),
         mavenDependencies = getEtaMavenDependencies(extracted, EtaLib),
+        gitDependencies = extracted.get(gitDependencies in EtaLib),
         cppOptions = extracted.get(cppOptions in EtaLib),
         ghcOptions = extracted.get(ghcOptions in EtaLib),
         extensions = extracted.get(extensions in EtaLib),
@@ -240,6 +253,7 @@ object SbtEta extends AutoPlugin {
           sourceDirectories = getFilePaths(extracted, sourceDirectories, EtaExe),
           buildDependencies = getEtaBuildDependencies(extracted, EtaExe),
           mavenDependencies = getEtaMavenDependencies(extracted, EtaExe),
+          gitDependencies = extracted.get(gitDependencies in EtaExe),
           hsMain = Some(main),
           cppOptions = extracted.get(cppOptions in EtaExe),
           ghcOptions = extracted.get(ghcOptions in EtaExe),
@@ -256,6 +270,7 @@ object SbtEta extends AutoPlugin {
           sourceDirectories = getFilePaths(extracted, sourceDirectories, EtaTest),
           buildDependencies = getEtaBuildDependencies(extracted, EtaTest),
           mavenDependencies = getEtaMavenDependencies(extracted, EtaTest),
+          gitDependencies = extracted.get(gitDependencies in EtaTest),
           hsMain = Some(main),
           cppOptions = extracted.get(cppOptions in EtaTest),
           ghcOptions = extracted.get(ghcOptions in EtaTest),

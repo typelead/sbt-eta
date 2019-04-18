@@ -14,6 +14,9 @@ lazy val root = (project in file(".")).
       eta("text"),
       "com.google.guava" % "guava" % "25.0-jre"
     ),
+    gitDependencies in EtaLib ++= Seq(
+      git("eta-spark-core", "https://github.com/Jyothsnasrinivas/eta-spark-core", branch("master"))
+    ),
     hsMain in EtaTest := Some("Example/TransformSpec.hs"),
     libraryDependencies in EtaTest ++= Seq(
       eta("hspec")

@@ -35,6 +35,8 @@ final case class Cabal(projectName: String,
     else None
   }
 
+  def gitDependencies: Seq[GitDependency] = artifacts.flatMap(_.gitDependencies)
+
   def hasLibrary   : Boolean = projectLibrary.nonEmpty
   def hasExecutable: Boolean = executables.nonEmpty
   def hasTestSuite : Boolean = testSuites.nonEmpty
@@ -83,6 +85,7 @@ object Cabal {
     def exposedModules: Seq[String]
     def buildDependencies: Seq[String]
     def mavenDependencies: Seq[String]
+    def gitDependencies: Seq[GitDependency]
     def hsMain: Option[String]
     def cppOptions: Seq[String]
     def ghcOptions: Seq[String]
@@ -99,6 +102,7 @@ object Cabal {
                            override val exposedModules: Seq[String],
                            override val buildDependencies: Seq[String],
                            override val mavenDependencies: Seq[String],
+                           override val gitDependencies: Seq[GitDependency],
                            override val cppOptions: Seq[String],
                            override val ghcOptions: Seq[String],
                            override val includeDirs: Seq[String],
@@ -117,6 +121,7 @@ object Cabal {
                               override val sourceDirectories: Seq[String],
                               override val buildDependencies: Seq[String],
                               override val mavenDependencies: Seq[String],
+                              override val gitDependencies: Seq[GitDependency],
                               override val hsMain: Option[String],
                               override val cppOptions: Seq[String],
                               override val ghcOptions: Seq[String],
@@ -136,6 +141,7 @@ object Cabal {
                              override val sourceDirectories: Seq[String],
                              override val buildDependencies: Seq[String],
                              override val mavenDependencies: Seq[String],
+                             override val gitDependencies: Seq[GitDependency],
                              override val hsMain: Option[String],
                              override val cppOptions: Seq[String],
                              override val ghcOptions: Seq[String],
@@ -156,9 +162,9 @@ object Cabal {
 
     type Filter = Artifact[_] => Boolean
 
-    def lib(name: String) : Library    = Library   (name, Nil, Nil, Nil, Nil,       Nil, Nil, Nil, Nil, Nil, "Haskell2010")
-    def exe(name: String) : Executable = Executable(name, Nil,      Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
-    def test(name: String): TestSuite  = TestSuite (name, Nil,      Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010", TestSuiteTypes.exitcode)
+    def lib(name: String) : Library    = Library   (name, Nil, Nil, Nil, Nil, Nil,       Nil, Nil, Nil, Nil, Nil, "Haskell2010")
+    def exe(name: String) : Executable = Executable(name, Nil,      Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
+    def test(name: String): TestSuite  = TestSuite (name, Nil,      Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010", TestSuiteTypes.exitcode)
 
     val all: Filter = _ => true
     val library: Filter = {
@@ -248,7 +254,7 @@ object Cabal {
         "  hs-source-dirs:     ", "                    , ") ++
       writeLines(artifact.exposedModules   ,
         "  exposed-modules:    ", "                    , ") ++
-      writeLines(artifact.buildDependencies,
+      writeLines(artifact.buildDependencies ++ artifact.gitDependencies.map(_.packageName),
         "  build-depends:      ", "                    , ") ++
       writeLines(artifact.mavenDependencies,
         "  maven-depends:      ", "                    , ") ++
@@ -265,6 +271,25 @@ object Cabal {
       Seq(
         "  default-language:   " + artifact.language
       )
+  }
+
+  private def writeGitDependencies(dependencies: Seq[GitDependency]): Seq[String] = {
+    Seq("packages: .", "") ++ dependencies.flatMap {
+      case GitDependency(_, location, resolver, subDir) =>
+        Seq(
+          "source-repository-package",
+          "  type: git",
+          "  location: " + location,
+          resolver match {
+            case GitDependency.Commit(commit) =>
+              "  commit: " + commit
+            case GitDependency.Branch(branch) =>
+              "  branch: " + branch
+            case GitDependency.Tag(tag) =>
+              "  tag: " + tag
+          }
+        ) ++ subDir.map(dir => "  subdir: " + dir) :+ ""
+    }
   }
 
   def writeCabal(cwd: File, cabal: Cabal, log: Logger): Cabal = {
@@ -301,6 +326,8 @@ object Cabal {
       val lines = headers ++ libraryDefs ++ executableDefs ++ testSuiteDefs
 
       IO.writeLines(cwd / cabal.cabalName, lines)
+      // --- Write cabal.project file
+      IO.writeLines(cwd / "cabal.project", writeGitDependencies(cabal.gitDependencies))
 
       cabal
     }
