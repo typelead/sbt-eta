@@ -11,6 +11,80 @@ import scala.collection.mutable.ArrayBuffer
 import scala.sys.process.{Process, ProcessLogger}
 import scala.util.Try
 
+final case class Etlas(cwd: File, dist: File, etaVersion: EtaVersion) {
+
+  import Etlas._
+
+  def build(cabal: Cabal, log: Logger): Unit = {
+    etlas(Seq("build").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
+    ()
+  }
+
+  def buildArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
+    cabal.getArtifacts(filter).foreach {
+      artifact => etlas(Seq("build", artifact.depsPackage).withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
+    }
+  }
+
+  def clean(log: Logger): Unit = {
+    etlas(Seq("clean").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log)
+    ()
+  }
+
+  def deps(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
+    def filterDepsLog(s: String): Boolean = defaultFilterLog(s) || !(s.startsWith("dependency") || s.startsWith("maven-dependencies"))
+    cabal.getArtifacts(filter).flatMap { artifact =>
+      etlas(Seq("deps", artifact.depsPackage, "--keep-going").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, saveOutput = true, filterLog = filterDepsLog)
+    }
+  }
+
+  def install(log: Logger): Unit = {
+    log.info("Installing dependencies...")
+    etlas(Seq("install", "--dependencies-only"), cwd, log)
+  }
+
+  def freeze(log: Logger): Unit = {
+    etlas(Seq("freeze"), cwd, log)
+  }
+
+  def run(log: Logger): Unit = {
+    etlas(Seq("run").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log)
+    ()
+  }
+
+  def runArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
+    cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.executable, filter)).foreach { artifact =>
+      etlas(Seq("run", artifact.name).withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
+    }
+  }
+
+  def test(log: Logger): Unit = {
+    etlas(Seq("test").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
+  }
+
+  def testArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
+    cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.testSuite, filter)).foreach { artifact =>
+      etlas(Seq("test", artifact.name).withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
+    }
+  }
+
+  // Resolve dependencies
+
+  def getMavenDependencies(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Seq[ModuleID] = {
+    log.info("Checking Maven dependencies...")
+    parseMavenDeps(deps(cabal, log, filter))
+  }
+
+  def getClasspath(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Classpath = {
+    log.info("Retrieving Eta dependency jar paths...")
+    parseDeps(deps(cabal, log, filter))
+      .map(s => PathFinder(file(s)))
+      .foldLeft(PathFinder.empty)((s1, s2) => s1 +++ s2)
+      .classpath
+  }
+
+}
+
 object Etlas {
 
   private def getParam(name: String): Option[String] = {
@@ -51,6 +125,7 @@ object Etlas {
       override def buffer[T](s: => T): T = s
     }
 
+    IO.createDirectory(cwd)
     logCmd(s"Running `etlas ${args.mkString(" ")} in '$cwd'`...")(log)
     val exitCode = synchronized(Process("etlas" +: args, cwd) ! logger)
 
@@ -77,34 +152,9 @@ object Etlas {
 
   }
 
-  // Commands
-
   private implicit class ArgsOps(val args: Seq[String]) extends AnyVal {
     def withBuildDir(dist: File): Seq[String] = args ++ Seq("--builddir", dist.getCanonicalPath)
     def withEtaVersion(etaVersion: EtaVersion): Seq[String] = s"--select-eta=${etaVersion.friendlyVersion}" +: args
-  }
-
-  def build(cabal: Cabal, cwd: File, dist: File, etaVersion: EtaVersion, log: Logger): Unit = {
-    etlas(Seq("build").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
-    ()
-  }
-
-  def buildArtifacts(cabal: Cabal, cwd: File, dist: File, etaVersion: EtaVersion, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
-    cabal.getArtifacts(filter).foreach {
-      artifact => etlas(Seq("build", artifact.depsPackage).withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
-    }
-  }
-
-  def clean(cwd: File, dist: File, etaVersion: EtaVersion, log: Logger): Unit = {
-    etlas(Seq("clean").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log)
-    ()
-  }
-
-  def deps(cabal: Cabal, cwd: File, dist: File, etaVersion: EtaVersion, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
-    def filterDepsLog(s: String): Boolean = defaultFilterLog(s) || !(s.startsWith("dependency") || s.startsWith("maven-dependencies"))
-    cabal.getArtifacts(filter).flatMap { artifact =>
-      etlas(Seq("deps", artifact.depsPackage, "--keep-going").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, saveOutput = true, filterLog = filterDepsLog)
-    }
   }
 
   def etaVersion(cwd: File, log: Logger): EtaVersion = {
@@ -121,7 +171,7 @@ object Etlas {
            version: String,
            developers: Seq[Developer],
            homepage: Option[URL],
-           src: File,
+           sourceDir: File,
            log: Logger): Unit = {
     log.info("Initialize project...")
     etlas(Seq(
@@ -132,22 +182,13 @@ object Etlas {
       s"--package-name=$name-eta",
       s"--synopsis=$description",
       s"--version=$version",
-      s"--source-dir=${IO.relativize(cwd, src).getOrElse(src.getCanonicalPath)}",
+      s"--source-dir=${IO.relativize(cwd, sourceDir).getOrElse(sourceDir.getCanonicalPath)}",
       "--language=Haskell2010"
     ) ++ developers.headOption.toList.flatMap(
       dev => Seq(s"--author=${dev.name}", s"--email=${dev.email}")
     ) ++ homepage.map(
       url => s"--homepage=$url"
     ), cwd, log)
-  }
-
-  def install(cwd: File, log: Logger): Unit = {
-    log.info("Installing dependencies...")
-    etlas(Seq("install", "--dependencies-only"), cwd, log)
-  }
-
-  def freeze(cwd: File, log: Logger): Unit = {
-    etlas(Seq("freeze"), cwd, log)
   }
 
   def repl(cwd: File, dist: File, etaVersion: EtaVersion, log: sbt.Logger): Try[Unit] = {
@@ -161,29 +202,6 @@ object Etlas {
         ()
     }
   }
-
-  def run(cwd: File, dist: File, etaVersion: EtaVersion, log: Logger): Unit = {
-    etlas(Seq("run").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log)
-    ()
-  }
-
-  def runArtifacts(cabal: Cabal, cwd: File, dist: File, etaVersion: EtaVersion, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
-    cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.executable, filter)).foreach { artifact =>
-      etlas(Seq("run", artifact.name).withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
-    }
-  }
-
-  def test(cwd: File, dist: File, etaVersion: EtaVersion, log: Logger): Unit = {
-    etlas(Seq("test").withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
-  }
-
-  def testArtifacts(cabal: Cabal, cwd: File, dist: File, etaVersion: EtaVersion, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
-    cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.testSuite, filter)).foreach { artifact =>
-      etlas(Seq("test", artifact.name).withBuildDir(dist).withEtaVersion(etaVersion), cwd, log, filterLog = _ => true)
-    }
-  }
-
-  // Resolve dependencies
 
   private def findAllDependencies(allLines: Seq[String], idx: Int): Seq[String] = {
     for {
@@ -208,19 +226,6 @@ object Etlas {
       parts <- line.split(":").grouped(3) if parts.length == 3
       module = parts(0) % parts(1) % parts(2)
     } yield module
-  }
-
-  def getMavenDependencies(cabal: Cabal, cwd: File, dist: File, etaVersion: EtaVersion, log: Logger, filter: Cabal.Artifact.Filter): Seq[ModuleID] = {
-    log.info("Checking Maven dependencies...")
-    parseMavenDeps(Etlas.deps(cabal, cwd, dist, etaVersion, log, filter))
-  }
-
-  def getClasspath(cabal: Cabal, cwd: File, dist: File, etaVersion: EtaVersion, log: Logger, filter: Cabal.Artifact.Filter): Classpath = {
-    log.info("Retrieving Eta dependency jar paths...")
-    parseDeps(Etlas.deps(cabal, cwd, dist, etaVersion, log, filter))
-      .map(s => PathFinder(file(s)))
-      .foldLeft(PathFinder.empty)((s1, s2) => s1 +++ s2)
-      .classpath
   }
 
 }
