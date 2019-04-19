@@ -15,3 +15,5 @@ project/plugins/project/
 project/target/
 
 output.json
+
+.idea

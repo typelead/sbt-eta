@@ -31,20 +31,14 @@ directory.
 
 1. Create a standard Scala/SBT project using your favorite method.
 
-2. Initialize new Eta project one of two ways: 
- 
-   1. Manual:
-  
-      1. Create the `src/main/eta` folder.
+2. Initialize new Eta project one of the following ways:
 
-      2. Run `etlas init` inside that folder to initialize an Etlas project.
-   
+   1. Describe Eta project using plugins DSL (preferred method) 
+ 
    2. Automatically with sbt command:
  
-      1. Run `eta-init` command in `sbt`, e.g. `sbt eta-init`.
+      * Run `eta-init` command in `sbt`, e.g. `sbt eta-init`.
       
-      2. New Eta project initialized in the `src/main/eta` folder.
-
 4. Write Scala/Eta code to perform your task.
 
 5. Start up `sbt` and run the `compile` and/or `run` task.
@@ -52,23 +46,15 @@ directory.
 ## Configuration
 
 ```scala
-etaPackageDir := baseDirectory.value
+baseDirectory in Eta := target.value / "eta"
 ```
 - **Type:** `File`
-- **Default:** `src/main/eta`. If `EtaLayoutPlugin` is disabled: `.` (`baseDirectory`)
+- **Default:** `target/eta`
 
-This is the root of your Etlas project.
-
-```scala
-etaSource in Compile := (sourceDirectory in Compile).value / "something"
-```
-- **Type:** `File`
-- **Default:** `src/main/eta`
-
-This is a directory containing sources of your Etlas project.
+This is the root of your Etlas project (where the `.cabal` file is placed).
 
 ```scala
-etaTarget := target.value / "something"
+target in Eta := target.value / "eta" / "dist"
 ```
 
 - **Type:** `File`
@@ -76,49 +62,38 @@ etaTarget := target.value / "something"
 
 This is where all of Etlas's build artifacts are stored.
 
+```scala
+sourceDirectory in EtaLib := (sourceDirectory in Compile).value / "eta"
+```
+- **Type:** `File`
+- **Default:** `src/main/eta`
+
+This is a directory containing sources of your Etlas project.
+
+TODO
+
 ## Project layout
 
-By default the directory structure of project looks like this:
-
-```
-   example/
-   ├── Setup.hs
-   └── src/
-       └── main/
-           ├── eta/
-           │   ├── Example/
-           │   |   ├── Transform.hs
-           |   |   └── TransformTest.hs
-           |   └── example.cabal
-           └── java/
-               └── Main.java
-```
-
-You also have the option of using a layout like the default one used by SBT and Maven. 
-Please note that this layout is experimental and may have issues. 
-In order to use this layout, you must disable the layout plugin in your `sbt` config:
-
-```scala
-disablePlugins(EtaLayoutPlugin)
-```
-
-After that the directory structure of project looks like this:
+By default the directory structure of project looks like the default one used by SBT and Maven:
 
 ```       
    example/
-   ├── example.cabal
-   ├── Setup.hs
-   └── src/
-       ├── main/
-       │   ├── eta/
-       │   │   └── Example/
-       │   │       └── Transform.hs
-       │   └── java/
-       │       └── Main.java
-       └── test/
-           └── eta/
-               └── Example/
-                   └── TransformTest.hs
+   ├── build.sbt
+   ├── src/
+   |   ├── main/
+   |   │   ├── eta/
+   |   │   │   └── Example/
+   |   │   │       └── Transform.hs
+   |   │   └── java/
+   |   │       └── Main.java
+   |   └── test/
+   |       └── eta/
+   |           └── Example/
+   |               └── TransformTest.hs
+   └── target/
+       └── eta/
+           ├── dist/
+           └── example-eta.cabal
 ``` 
 
 ## License
