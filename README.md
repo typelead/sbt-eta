@@ -18,14 +18,21 @@ An sbt plugin that overrides the build cycle to compile Etlas projects located i
 
 Add the following to your `project/plugins.sbt` file:
 
-```scala
+```sbtshell
 addSbtPlugin("com.typelead" % "sbt-eta" % "0.3.0")
+```
+
+For projects using Eta enable SbtEta plugin, e.g.:
+
+```sbtshell
+val root = (project in file(".")).enablePlugins(SbtEta)
 ```
 
 ## Example
 
-An example project integration Eta with Scala is provided in the [example](./example/README.md)
-directory.
+An example project integration Eta with Scala is provided in the [example](./example/README.md) directory.
+
+An example of multi-project build included Eta projects is provided in the [example-multi](./example-multi/README.md) directory.
 
 ## Basics
 
@@ -45,7 +52,7 @@ directory.
 
 ## Configuration
 
-```scala
+```sbtshell
 baseDirectory in Eta := target.value / "eta"
 ```
 - **Type:** `File`
@@ -53,7 +60,7 @@ baseDirectory in Eta := target.value / "eta"
 
 This is the root of your Etlas project (where the `.cabal` file is placed).
 
-```scala
+```sbtshell
 target in Eta := target.value / "eta" / "dist"
 ```
 
@@ -62,7 +69,7 @@ target in Eta := target.value / "eta" / "dist"
 
 This is where all of Etlas's build artifacts are stored.
 
-```scala
+```sbtshell
 sourceDirectory in EtaLib := (sourceDirectory in Compile).value / "eta"
 ```
 - **Type:** `File`
