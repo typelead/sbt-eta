@@ -76,11 +76,17 @@ final case class Etlas(cwd: File, dist: File, etaVersion: EtaVersion) {
   }
 
   def getClasspath(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Classpath = {
-    log.info("Retrieving Eta dependency jar paths...")
+    log.info("Retrieving Eta dependencies classpath...")
     parseDeps(deps(cabal, log, filter))
       .map(s => PathFinder(file(s)))
       .foldLeft(PathFinder.empty)((s1, s2) => s1 +++ s2)
       .classpath
+  }
+
+  def getEtaPackage(cabal: Cabal, log: Logger): Cabal.EtaPackage = {
+    log.info("Resolve package dependencies...")
+    buildArtifacts(cabal, log, Cabal.Artifact.library)
+    Cabal.EtaPackage(cabal.projectName, cabal.getArtifactsJars(dist, etaVersion, Cabal.Artifact.library), getPackageDd(dist, etaVersion))
   }
 
 }
@@ -226,6 +232,26 @@ object Etlas {
       parts <- line.split(":").grouped(3) if parts.length == 3
       module = parts(0) % parts(1) % parts(2)
     } yield module
+  }
+
+  def getPackageDd(dist: File, etaVersion: EtaVersion): File = {
+    dist / "packagedb" / ("eta-" + etaVersion.machineVersion)
+  }
+
+  private def getBuildDir(dist: File, etaVersion: EtaVersion, packageId: String): File = {
+    dist / "build" / ("eta-" + etaVersion.machineVersion) / packageId
+  }
+
+  def getLibraryJar(dist: File, etaVersion: EtaVersion, packageId: String): File = {
+    getBuildDir(dist, etaVersion, packageId) / "build" / (packageId + "-inplace.jar")
+  }
+
+  def getExecutableJar(dist: File, etaVersion: EtaVersion, packageId: String, name: String): File = {
+    getBuildDir(dist, etaVersion, packageId) / "x" / name / "build" / name / (name + ".jar")
+  }
+
+  def getTestSuiteJar(dist: File, etaVersion: EtaVersion, packageId: String, name: String): File = {
+    getBuildDir(dist, etaVersion, packageId) / "t" / name / "build" / name / (name + ".jar")
   }
 
 }

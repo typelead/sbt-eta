@@ -9,24 +9,25 @@ final case class Cabal(projectName: String,
                        executables: Seq[Cabal.Executable],
                        testSuites: Seq[Cabal.TestSuite]) {
 
+  import Cabal._
+
   val cabalName: String = projectName + ".cabal"
   val packageId: String = projectName + "-" + projectVersion
 
-  def artifacts: Seq[Cabal.Artifact[_]] = projectLibrary.toList ++ executables ++ testSuites
-  def getArtifacts(filter: Cabal.Artifact.Filter): Seq[Cabal.Artifact[_]] = artifacts.filter(filter).sortBy {
-    case _: Cabal.Library    => 0
-    case _: Cabal.Executable => 1
-    case _: Cabal.TestSuite  => 2
+  def artifacts: Seq[Artifact[_]] = projectLibrary.toList ++ executables ++ testSuites
+  def getArtifacts(filter: Artifact.Filter): Seq[Artifact[_]] = artifacts.filter(filter).sortBy {
+    case _: Library    => 0
+    case _: Executable => 1
+    case _: TestSuite  => 2
   }
-  def getArtifactsJars(dist: File, etaVersion: EtaVersion, filter: Cabal.Artifact.Filter): Seq[File] = {
-    val buildPath = dist / "build" / ("eta-" + etaVersion.machineVersion) / packageId
+  def getArtifactsJars(dist: File, etaVersion: EtaVersion, filter: Artifact.Filter): Seq[File] = {
     getArtifacts(filter).map {
-      case _: Cabal.Library =>
-        buildPath / "build" / (packageId + "-inplace.jar")
-      case a: Cabal.Executable =>
-        buildPath / "x" / a.name / "build" / a.name / (a.name + ".jar")
-      case a: Cabal.TestSuite =>
-        buildPath / "t" / a.name / "build" / a.name / (a.name + ".jar")
+      case _: Library =>
+        Etlas.getLibraryJar(dist, etaVersion, packageId)
+      case a: Executable =>
+        Etlas.getExecutableJar(dist, etaVersion, packageId, a.name)
+      case a: TestSuite =>
+        Etlas.getTestSuiteJar(dist, etaVersion, packageId, a.name)
     }
   }
 
@@ -35,7 +36,9 @@ final case class Cabal(projectName: String,
     else None
   }
 
-  def gitDependencies: Seq[GitDependency] = artifacts.flatMap(_.gitDependencies)
+  def buildDependencies: Seq[String] = artifacts.flatMap(_.buildDependencies).distinct
+  def mavenDependencies: Seq[String] = artifacts.flatMap(_.mavenDependencies).distinct
+  def gitDependencies: Seq[GitDependency] = distinctBy(artifacts.flatMap(_.gitDependencies))(_.packageName)
 
   def hasLibrary   : Boolean = projectLibrary.nonEmpty
   def hasExecutable: Boolean = executables.nonEmpty
@@ -43,27 +46,50 @@ final case class Cabal(projectName: String,
 
   def resolveNames: Cabal = this.copy(
     projectLibrary = projectLibrary.map {
-      case a if a.name == Cabal.NONAME => a.copy(name = projectName)
+      case a if a.name == NONAME => a.copy(name = projectName)
       case other                       => other
     },
     executables = executables.map {
-      case a if a.name == Cabal.NONAME => a.copy(name = projectName)
+      case a if a.name == NONAME => a.copy(name = projectName)
       case other                       => other
     },
     testSuites = testSuites.map {
-      case a if a.name == Cabal.NONAME => a.copy(name = projectName)
+      case a if a.name == NONAME => a.copy(name = projectName)
       case other                       => other
     }
   )
 
-  def isEmpty: Boolean = projectName == Cabal.NONAME || projectVersion == Cabal.NOVERSION || artifacts.isEmpty
+  def isEmpty: Boolean = projectName == NONAME || projectVersion == NOVERSION || artifacts.isEmpty
+
+  def getTmpCabal: Cabal = {
+    Cabal(
+      projectName = projectName,
+      projectVersion = projectVersion,
+      projectLibrary = Some(Library(
+        name = projectName,
+        sourceDirectories = Nil,
+        exposedModules = Nil,
+        buildDependencies = buildDependencies,
+        mavenDependencies = mavenDependencies,
+        gitDependencies   = gitDependencies,
+        cppOptions = Nil,
+        ghcOptions = Nil,
+        extensions = Nil,
+        includeDirs = Nil,
+        installIncludes = Nil,
+        language = "Haskell2010"
+      )),
+      executables = Nil,
+      testSuites = Nil
+    )
+  }
 
 }
 
 object Cabal {
 
-  val NONAME = "<--noname-->"
-  val NOVERSION = "<--noversion-->"
+  private val NONAME = "<--noname-->"
+  private val NOVERSION = "<--noversion-->"
 
   val empty: Cabal = Cabal(
     projectName = NONAME,
@@ -72,6 +98,8 @@ object Cabal {
     executables = Nil,
     testSuites = Nil
   )
+
+  final case class EtaPackage(name: String, jars: Seq[File], packageDb: File)
 
   object TestSuiteTypes extends Enumeration {
     val exitcode: Value = Value("exitcode-stdio-1.0")
@@ -94,7 +122,7 @@ object Cabal {
     def extensions: Seq[String]
     def language: String
 
-    def addLibrary(artifact: Library): A
+    def addLibrary(artifact: Option[Library]): A
   }
 
   final case class Library(override val name: String,
@@ -113,7 +141,7 @@ object Cabal {
     override val depsPackage: String = "lib:" + name
     override val hsMain: Option[String] = None
 
-    override def addLibrary(artifact: Library): Library = this
+    override def addLibrary(artifact: Option[Library]): Library = this
 
   }
 
@@ -133,7 +161,7 @@ object Cabal {
     override val depsPackage: String = "exe:" + name
     override val exposedModules: Seq[String] = Nil
 
-    override def addLibrary(artifact: Library): Executable = this.copy(buildDependencies = buildDependencies :+ artifact.name)
+    override def addLibrary(artifact: Option[Library]): Executable = this.copy(buildDependencies = buildDependencies ++ artifact.map(_.name).toList)
 
   }
 
@@ -154,7 +182,7 @@ object Cabal {
     override val depsPackage: String = "test:" + name
     override val exposedModules: Seq[String] = Nil
 
-    override def addLibrary(artifact: Library): TestSuite = this.copy(buildDependencies = buildDependencies :+ artifact.name)
+    override def addLibrary(artifact: Option[Library]): TestSuite = this.copy(buildDependencies = buildDependencies ++ artifact.map(_.name).toList)
 
   }
 
@@ -241,7 +269,7 @@ object Cabal {
     else Nil
   }
 
-  private def writeArtifact[A <: Artifact[A]](artifact: Artifact[A]): Seq[String] = {
+  private def writeArtifact[A <: Artifact[A]](artifact: Artifact[A], etaPackages: Seq[EtaPackage]): Seq[String] = {
     val lines = artifact match {
       case t: TestSuite =>
         Seq("  type:               " + t.testSuiteType.toString)
@@ -254,7 +282,7 @@ object Cabal {
         "  hs-source-dirs:     ", "                    , ") ++
       writeLines(artifact.exposedModules   ,
         "  exposed-modules:    ", "                    , ") ++
-      writeLines(artifact.buildDependencies ++ artifact.gitDependencies.map(_.packageName),
+      writeLines(artifact.buildDependencies ++ artifact.gitDependencies.map(_.packageName) ++ etaPackages.map(_.name).distinct,
         "  build-depends:      ", "                    , ") ++
       writeLines(artifact.mavenDependencies,
         "  maven-depends:      ", "                    , ") ++
@@ -273,30 +301,45 @@ object Cabal {
       )
   }
 
-  private def writeGitDependencies(dependencies: Seq[GitDependency]): Seq[String] = {
-    Seq("packages: .", "") ++ dependencies.flatMap {
-      case GitDependency(_, location, resolver, subDir) =>
-        Seq(
-          "source-repository-package",
-          "  type: git",
-          "  location: " + location,
-          resolver match {
-            case GitDependency.Commit(commit) =>
-              "  commit: " + commit
-            case GitDependency.Branch(branch) =>
-              "  branch: " + branch
-            case GitDependency.Tag(tag) =>
-              "  tag: " + tag
-          }
-        ) ++ subDir.map(dir => "  subdir: " + dir) :+ ""
-    }
+  // --- Write cabal.project file
+  def writeCabalProject(cwd: File, cabal: Cabal, etaPackages: Seq[EtaPackage], log: Logger): Unit = {
+    log.info(s"Rewrite 'cabal.project' in '${cwd.getCanonicalFile}'.")
+    val lines = Seq("packages: .", "") ++
+      writeLines(etaPackages.map(_.packageDb.getCanonicalPath), "package-dbs:\n  ", "  ") ++
+      cabal.gitDependencies.flatMap {
+        case GitDependency(_, location, resolver, subDir) =>
+          Seq(
+            "source-repository-package",
+            "  type: git",
+            "  location: " + location,
+            resolver match {
+              case GitDependency.Commit(commit) =>
+                "  commit: " + commit
+              case GitDependency.Branch(branch) =>
+                "  branch: " + branch
+              case GitDependency.Tag(tag) =>
+                "  tag: " + tag
+            }
+          ) ++ subDir.map(dir => "  subdir: " + dir) :+ ""
+      }
+    IO.writeLines(cwd / "cabal.project", lines)
   }
 
-  def writeCabal(cwd: File, cabal: Cabal, log: Logger): Cabal = {
+  // --- Write cabal.project.local file
+  def writeCabalProjectLocal(cwd: File, cabal: Cabal, etaPackages: Seq[EtaPackage], classpath: Seq[File], log: Logger): Unit = {
+    log.info(s"Rewrite 'cabal.project.local' in '${cwd.getCanonicalFile}'.")
+    val fullClasspath = etaPackages.flatMap(_.jars) ++ classpath
+    val lines = Seq(
+      s"""package ${cabal.projectName}""",
+      s"""  eta-options: -cp "${fullClasspath.map(_.getCanonicalPath).mkString(":")}" """
+    )
+    IO.writeLines(cwd / "cabal.project.local", lines)
+  }
+
+  def writeCabal(cwd: File, cabal: Cabal, etaPackages: Seq[EtaPackage], log: Logger): Unit = {
     if (cabal.isEmpty) {
       sys.error("The Eta project is not properly configured.")
     } else {
-
       log.info(s"Rewrite '${cabal.cabalName}' in '${cwd.getCanonicalFile}'.")
 
       val headers = Seq(
@@ -309,32 +352,33 @@ object Cabal {
         Seq(
           "",
           "library"
-        ) ++ writeArtifact(artifact)
+        ) ++ writeArtifact(artifact, etaPackages)
       }.getOrElse(Nil)
       val executableDefs = cabal.executables.flatMap { artifact =>
         Seq(
           "",
           "executable " + artifact.name
-        ) ++ writeArtifact(artifact)
+        ) ++ writeArtifact(artifact.addLibrary(cabal.projectLibrary), etaPackages)
       }
       val testSuiteDefs = cabal.testSuites.flatMap { artifact =>
         Seq(
           "",
           "test-suite " + artifact.name
-        ) ++ writeArtifact(artifact)
+        ) ++ writeArtifact(artifact.addLibrary(cabal.projectLibrary), etaPackages)
       }
       val lines = headers ++ libraryDefs ++ executableDefs ++ testSuiteDefs
 
+      IO.delete((cwd * "cabal.*").get())
       IO.writeLines(cwd / cabal.cabalName, lines)
-      // --- Write cabal.project file
-      IO.writeLines(cwd / "cabal.project", writeGitDependencies(cabal.gitDependencies))
-
-      cabal
     }
   }
 
   def getCabalFile(cwd: File): Option[String] = {
     cwd.listFiles.map(_.getName).find(_.matches(""".*\.cabal$"""))
+  }
+
+  private def distinctBy[A, B](xs: Seq[A])(f: A => B): Seq[A] = {
+    xs.groupBy(f).mapValues(_.head).values.toIndexedSeq
   }
 
 }
