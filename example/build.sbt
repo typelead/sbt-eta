@@ -5,7 +5,9 @@ lazy val root = (project in file(".")).
       version      := "0.1.0-SNAPSHOT"
     )),
     name := "example",
-    etaVersion := "0.8.6b5",
+    etaVersion in Eta := "0.8.6b5",
+    etlasUseLocal in Eta := false,
+    etlasVersion in Eta := "1.5.0.0",
     exposedModules in EtaLib += "Example.Transform",
     libraryDependencies in EtaLib ++= Seq(
       eta("aeson"),

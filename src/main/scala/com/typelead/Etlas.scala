@@ -6,67 +6,105 @@ import java.lang.{ProcessBuilder => JProcessBuilder}
 import EtaDependency.EtaVersion
 import sbt.Keys._
 import sbt._
+import sbt.io.Using
 
 import scala.collection.mutable.ArrayBuffer
 import scala.sys.process.{Process, ProcessLogger}
-import scala.util.Try
+import scala.util.{Properties, Try}
 
-final case class Etlas(workDir: File, dist: File, etaVersion: EtaVersion) {
+final case class Etlas(installPath: Option[File], workDir: File, dist: File, etaVersion: EtaVersion) {
 
   import Etlas._
 
   def changeWorkDir(workDir: File): Etlas = this.copy(workDir = workDir)
 
   def build(cabal: Cabal, log: Logger): Unit = {
-    etlas(Seq("build").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
+    etlas(installPath, Seq("build").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
     ()
   }
 
   def buildArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
     cabal.getArtifacts(filter).foreach {
-      artifact => etlas(Seq("build", artifact.depsPackage).withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
+      artifact => etlas(installPath, Seq("build", artifact.depsPackage).withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
     }
   }
 
   def clean(log: Logger): Unit = {
-    etlas(Seq("clean").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log)
+    etlas(installPath, Seq("clean").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log)
     ()
   }
 
   def deps(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
     def filterDepsLog(s: String): Boolean = defaultFilterLog(s) || !(s.startsWith("dependency") || s.startsWith("maven-dependencies"))
     cabal.getArtifacts(filter).flatMap { artifact =>
-      etlas(Seq("deps", artifact.depsPackage, "--keep-going").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, saveOutput = true, filterLog = filterDepsLog)
+      etlas(installPath, Seq("deps", artifact.depsPackage, "--keep-going").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, saveOutput = true, filterLog = filterDepsLog)
     }
   }
 
   def install(log: Logger): Unit = {
     log.info("Installing dependencies...")
-    etlas(Seq("install", "--dependencies-only"), workDir, log)
+    etlas(installPath, Seq("install", "--dependencies-only"), workDir, log)
   }
 
   def freeze(log: Logger): Unit = {
-    etlas(Seq("freeze"), workDir, log)
+    etlas(installPath, Seq("freeze"), workDir, log)
   }
 
   def run(log: Logger): Unit = {
-    etlas(Seq("run").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log)
+    etlas(installPath, Seq("run").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log)
     ()
   }
 
   def runArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
     cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.executable, filter)).foreach { artifact =>
-      etlas(Seq("run", artifact.name).withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
+      etlas(installPath, Seq("run", artifact.name).withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
     }
   }
 
   def test(log: Logger): Unit = {
-    etlas(Seq("test").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
+    etlas(installPath, Seq("test").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
   }
 
   def testArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
     cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.testSuite, filter)).foreach { artifact =>
-      etlas(Seq("test", artifact.name).withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
+      etlas(installPath, Seq("test", artifact.name).withBuildDir(dist).withEtaVersion(etaVersion), workDir, log, filterLog = _ => true)
+    }
+  }
+
+  def init(name: String,
+           description: String,
+           version: String,
+           developers: Seq[Developer],
+           homepage: Option[URL],
+           sourceDir: File,
+           log: Logger): Unit = {
+    log.info("Initialize project...")
+    etlas(installPath, Seq(
+      "init",
+      "--non-interactive",
+      "--is-executable",
+      s"--package-dir=${workDir.getCanonicalPath}",
+      s"--package-name=$name-eta",
+      s"--synopsis=$description",
+      s"--version=$version",
+      s"--source-dir=${IO.relativize(workDir, sourceDir).getOrElse(sourceDir.getCanonicalPath)}",
+      "--language=Haskell2010"
+    ) ++ developers.headOption.toList.flatMap(
+      dev => Seq(s"--author=${dev.name}", s"--email=${dev.email}")
+    ) ++ homepage.map(
+      url => s"--homepage=$url"
+    ), workDir, log)
+  }
+
+  def repl(log: sbt.Logger): Try[Unit] = {
+    def console0(): Unit = {
+      log.info("Starting Eta interpreter...")
+      fork(installPath, Seq("repl").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log)
+    }
+    Run.executeTrapExit(console0(), log).recover {
+      case _: InterruptedException =>
+        log.info("Eta REPL was interrupted.")
+        ()
     }
   }
 
@@ -112,7 +150,12 @@ object Etlas {
     }
   }
 
-  private def etlas(args: Seq[String],
+  private def getEtlasBinary(installPath: Option[File]): String = {
+    installPath.map(_.getCanonicalPath).getOrElse("etlas")
+  }
+
+  private def etlas(installPath: Option[File],
+                    args: Seq[String],
                     workDir: File,
                     log: Logger,
                     saveOutput: Boolean = false,
@@ -133,8 +176,9 @@ object Etlas {
     }
 
     IO.createDirectory(workDir)
-    logCmd(s"Running `etlas ${args.mkString(" ")} in '$workDir'`...")(log)
-    val exitCode = synchronized(Process("etlas" +: args, workDir) ! logger)
+    val binary = getEtlasBinary(installPath)
+    logCmd(s"Running `$binary ${args.mkString(" ")} in '$workDir'`...")(log)
+    val exitCode = synchronized(Process(binary +: args, workDir) ! logger)
 
     if (exitCode != 0) {
       sys.error("\n\n[etlas] Exit Failure " ++ exitCode.toString)
@@ -144,11 +188,11 @@ object Etlas {
 
   }
 
-  private def fork(args: Seq[String], workDir: File, log: sbt.Logger): Unit = {
+  private def fork(installPath: Option[File], args: Seq[String], workDir: File, log: sbt.Logger): Unit = {
 
-    logCmd(s"Running `etlas ${args.mkString(" ")} in '$workDir'`...")(Logger(log))
-
-    val jpb = new JProcessBuilder(("etlas" +: args).toArray: _ *)
+    val binary = getEtlasBinary(installPath)
+    logCmd(s"Running `$binary ${args.mkString(" ")} in '$workDir'`...")(Logger(log))
+    val jpb = new JProcessBuilder((binary +: args).toArray: _ *)
     jpb.directory(workDir)
     jpb.redirectInput(Redirect.INHERIT)
     val exitCode = Process(jpb).run(SbtUtils.terminalIO).exitValue()
@@ -164,49 +208,40 @@ object Etlas {
     def withEtaVersion(etaVersion: EtaVersion): Seq[String] = s"--select-eta=${etaVersion.friendlyVersion}" +: args
   }
 
-  def etaVersion(workDir: File, log: Logger): EtaVersion = {
-    EtaVersion(etlas(Seq("exec", "eta", "--", "--numeric-version"), workDir, log, saveOutput = true).head)
+  def etaVersion(installPath: Option[File], workDir: File, log: Logger): EtaVersion = {
+    EtaVersion(etlas(installPath, Seq("exec", "eta", "--", "--numeric-version"), workDir, log, saveOutput = true).head)
   }
 
-  def etlasVersion(workDir: File, log: Logger): String = {
-    etlas(Seq("--numeric-version"), workDir, log, saveOutput = true).head
+  def etlasVersion(installPath: Option[File], workDir: File, log: Logger): String = {
+    etlas(None, Seq("--numeric-version"), workDir, log, saveOutput = true).head
   }
 
-  def init(workDir: File,
-           name: String,
-           description: String,
-           version: String,
-           developers: Seq[Developer],
-           homepage: Option[URL],
-           sourceDir: File,
-           log: Logger): Unit = {
-    log.info("Initialize project...")
-    etlas(Seq(
-      "init",
-      "--non-interactive",
-      "--is-executable",
-      s"--package-dir=${workDir.getCanonicalPath}",
-      s"--package-name=$name-eta",
-      s"--synopsis=$description",
-      s"--version=$version",
-      s"--source-dir=${IO.relativize(workDir, sourceDir).getOrElse(sourceDir.getCanonicalPath)}",
-      "--language=Haskell2010"
-    ) ++ developers.headOption.toList.flatMap(
-      dev => Seq(s"--author=${dev.name}", s"--email=${dev.email}")
-    ) ++ homepage.map(
-      url => s"--homepage=$url"
-    ), workDir, log)
-  }
+  private[typelead] val DEFAULT_ETLAS_REPO = "http://cdnverify.eta-lang.org/eta-binaries"
 
-  def repl(workDir: File, dist: File, etaVersion: EtaVersion, log: sbt.Logger): Try[Unit] = {
-    def console0(): Unit = {
-      log.info("Starting Eta interpreter...")
-      fork(Seq("repl").withBuildDir(dist).withEtaVersion(etaVersion), workDir, log)
+  def download(repo: String, dest: File, version: String, log: Logger): Unit = {
+    val (arch, ext) = if (Properties.isWin)
+      ("x86_64-windows", ".exe")
+    else if (Properties.isMac)
+      ("x86_64-osx", "")
+    else
+      ("x86_64-linux", "")
+    val binary = "etlas" + ext
+    if (dest.exists()) {
+      ()
+    } else {
+      val url = new URL(repo + "/etlas-" + version + "/binaries/" + arch + "/" + binary)
+      log.info(s"Downloading Etlas binary from '$url' to '${dest.getCanonicalPath}' ...")
+      IO.createDirectory(dest.getParentFile)
+      Using.urlInputStream(url) { input =>
+        IO.transfer(input, dest)
+      }
     }
-    Run.executeTrapExit(console0(), log).recover {
-      case _: InterruptedException =>
-        log.info("Eta REPL was interrupted.")
-        ()
+    if (dest.setExecutable(true)) {
+      val version = etlas(Some(dest), Seq("--version"), dest.getParentFile, log, saveOutput = true).head
+      if (version.toLowerCase.contains("etlas")) ()
+      else sys.error(s"Executable '${dest.getCanonicalPath}' is not Etlas binary.")
+    } else {
+      sys.error("Could not set permissions for Eltas binary.")
     }
   }
 

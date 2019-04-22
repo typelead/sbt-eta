@@ -18,9 +18,12 @@ object SbtEta extends AutoPlugin {
     lazy val EtaExe: Configuration = config("EtaExe")
     lazy val EtaTest: Configuration = config("EtaTest")
 
-    lazy val etaVersion   = settingKey[String]("Version of the Eta compiler.")
-    lazy val etlasVersion = settingKey[String]("Version of the Etlas build tool.")
-    lazy val etaCompile   = taskKey[Unit]("Build your Eta project.")
+    lazy val etaVersion      = settingKey[String]("Version of the Eta compiler.")
+    lazy val etlasVersion    = settingKey[String]("Version of the Etlas build tool.")
+    lazy val etlasUseLocal   = settingKey[Boolean]("If `true`, use instance of Etlas installed in your system. If `false`, use Etlas specified by project settings.")
+    lazy val etlasPath       = settingKey[File]("Specifies the path to Etlas executable used in this build.")
+    lazy val etlasRepository = settingKey[String]("URL address of Etlas repository. Do not change!")
+    lazy val etaCompile      = taskKey[Unit]("Build your Eta project.")
 
     // Eta configuration DSL
 
@@ -60,23 +63,36 @@ object SbtEta extends AutoPlugin {
 
   private lazy val etlas = settingKey[Etlas]("Helper for Etlas commands.")
   private lazy val etaCabal = taskKey[Cabal]("Structure of the .cabal file.")
-  private lazy val etaPackage = taskKey[EtaPackage]("")
+  private lazy val etaPackage = taskKey[EtaPackage]("Sturcture of Eta package.")
 
   private lazy val baseEtaSettings: Seq[Def.Setting[_]] = {
     inConfig(Eta)(Seq(
       baseDirectory := (target in Compile).value / "eta",
       target := (target in Compile).value / "eta" / "dist",
       // Plugin specific tasks
-      etlas := Etlas(baseDirectory.value, target.value, EtaVersion(etaVersion.value)),
+      etlasUseLocal := true,
+      etlasPath := BuildPaths.defaultGlobalBase / "etlas" / "etlas",
+      etlasRepository := Etlas.DEFAULT_ETLAS_REPO,
+      etlas := {
+        if (etlasUseLocal.value) {
+          Etlas(None, baseDirectory.value, target.value, EtaVersion(etaVersion.value))
+        } else {
+          val installPath = etlasPath.value
+          Etlas.download(etlasRepository.value, installPath, etlasVersion.value, Logger(sLog.value))
+          Etlas(Some(installPath), baseDirectory.value, target.value, EtaVersion(etaVersion.value))
+        }
+      },
+      etlasVersion := {
+        val installPath = if (etlasUseLocal.value) None else Some(etlasPath.value)
+        Etlas.etlasVersion(installPath, baseDirectory.value, Logger(sLog.value))
+      },
+      etaVersion := {
+        val installPath = if (etlasUseLocal.value) None else Some(etlasPath.value)
+        Etlas.etaVersion(installPath, baseDirectory.value, Logger(sLog.value)).friendlyVersion
+      },
       etaCabal := refreshCabalTask.value,
       etaPackage := {
         etlas.value.getEtaPackage(etaCabal.value, Logger(streams.value))
-      },
-      etaVersion := {
-        Etlas.etaVersion(baseDirectory.value, Logger(sLog.value)).friendlyVersion
-      },
-      etlasVersion := {
-        Etlas.etlasVersion(baseDirectory.value, Logger(sLog.value))
       },
       // Standard tasks
       clean := {
@@ -352,8 +368,7 @@ object SbtEta extends AutoPlugin {
         log.warn(s"Found '$file' in '${workDir.getCanonicalPath}'. Could not initialize new Eta project.")
         state
       case None =>
-        Etlas.init(
-          workDir,
+        extracted.get(etlas in Eta).init(
           extracted.get(normalizedName),
           extracted.get(description),
           EtaDependency.getPackageVersion(extracted.get(version)),
@@ -368,12 +383,7 @@ object SbtEta extends AutoPlugin {
 
   private def etaReplCommand: Command = Command.command("eta-repl") { state =>
     val extracted = Project.extract(state)
-    Etlas.repl(
-      extracted.get(baseDirectory in Eta),
-      extracted.get(target in Eta),
-      EtaVersion(extracted.get(etaVersion in Eta)),
-      extracted.get(sLog)
-    ).get
+    extracted.get(etlas in Eta).repl(extracted.get(sLog)).get
     println()
     state
   }
