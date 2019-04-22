@@ -23,3 +23,4 @@ lazy val root = (project in file(".")).
     ),
     extensions in EtaLib += "OverloadedStrings"
   )
+  .enablePlugins(SbtEta)

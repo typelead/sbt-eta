@@ -11,6 +11,10 @@ jobs:
         name: Running the sbt example
         working_directory: example
         command: sbt test run
+    - run:
+        name: Running the sbt example-muilti
+        working_directory: example-multi
+        command: sbt multi/run
 
 workflows:
   version: 2

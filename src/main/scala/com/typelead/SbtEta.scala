@@ -9,32 +9,32 @@ object SbtEta extends AutoPlugin {
   import Cabal._
 
   override def requires = plugins.JvmPlugin
-  override def trigger  = allRequirements
+  override def trigger  = noTrigger
 
   object autoImport {
 
-    val Eta: Configuration = config("Eta")
-    val EtaLib: Configuration = config("EtaLib")
-    val EtaExe: Configuration = config("EtaExe")
-    val EtaTest: Configuration = config("EtaTest")
+    lazy val Eta: Configuration = config("Eta")
+    lazy val EtaLib: Configuration = config("EtaLib")
+    lazy val EtaExe: Configuration = config("EtaExe")
+    lazy val EtaTest: Configuration = config("EtaTest")
 
-    val etaVersion   = SettingKey[String]("eta-version", "Version of the Eta compiler.")
-    val etlasVersion = SettingKey[String]("etlas-version", "Version of the Etlas build tool.")
-    val etaCompile   = TaskKey[Unit]("eta-compile", "Build your Eta project.")
+    lazy val etaVersion   = settingKey[String]("Version of the Eta compiler.")
+    lazy val etlasVersion = settingKey[String]("Version of the Etlas build tool.")
+    lazy val etaCompile   = taskKey[Unit]("Build your Eta project.")
 
     // Eta configuration DSL
 
-    val useLocalCabal = SettingKey[Boolean]("eta-dsl-useLocalCabal", "If `true`, use local .cabal file in root folder. If `false`, recreate .cabal file from project settings.")
-    val hsMain = SettingKey[Option[String]]("eta-dsl-hsMain", "Specifies main class for artifact.")
-    val exposedModules = SettingKey[Seq[String]]("eta-dsl-exposedModules", "A list of modules added by this package.")
-    val language = SettingKey[String]("eta-dsl-language", "Specifies the language to use for the build.")
-    val extensions = SettingKey[Seq[String]]("eta-dsl-extensions", "The set of language extensions to enable or disable for the build.")
-    val cppOptions = SettingKey[Seq[String]]("eta-dsl-cppOptions", "The flags to send to the preprocessor used by the Eta compiler to preprocess files that enable the CPP extension.")
-    val ghcOptions = SettingKey[Seq[String]]("eta-dsl-ghcOptions", "The direct flags to send to the Eta compiler.")
-    val includeDirs = SettingKey[Seq[File]]("eta-dsl-includeDirs", "Paths to directories which contain include files that can later be referenced with `#include` directives.")
-    val installIncludes = SettingKey[Seq[String]]("eta-dsl-installIncludes", "Names of include files to install along with the package being built.")
-    val testSuiteType = SettingKey[Cabal.TestSuiteTypes.Value]("eta-dsl-testSuiteType", "The interface type and version of the test suite.")
-    val gitDependencies = SettingKey[Seq[GitDependency]]("eta-dsl-gitDependencies", "List of external dependencies, which are build and installed from Git.")
+    lazy val useLocalCabal = settingKey[Boolean]("If `true`, use local .cabal file in root folder. If `false`, recreate .cabal file from project settings.")
+    lazy val hsMain = settingKey[Option[String]]("Specifies main class for artifact.")
+    lazy val exposedModules = settingKey[Seq[String]]("A list of modules added by this package.")
+    lazy val language = settingKey[String]("Specifies the language to use for the build.")
+    lazy val extensions = settingKey[Seq[String]]("The set of language extensions to enable or disable for the build.")
+    lazy val cppOptions = settingKey[Seq[String]]("The flags to send to the preprocessor used by the Eta compiler to preprocess files that enable the CPP extension.")
+    lazy val ghcOptions = settingKey[Seq[String]]("The direct flags to send to the Eta compiler.")
+    lazy val includeDirs = settingKey[Seq[File]]("Paths to directories which contain include files that can later be referenced with `#include` directives.")
+    lazy val installIncludes = settingKey[Seq[String]]("Names of include files to install along with the package being built.")
+    lazy val testSuiteType = settingKey[Cabal.TestSuiteTypes.Value]("The interface type and version of the test suite.")
+    lazy val gitDependencies = settingKey[Seq[GitDependency]]("List of external dependencies, which are build and installed from Git.")
 
     def eta(packageName: String): ModuleID = EtaDependency(packageName)
     def eta(packageName: String, version: String): ModuleID = EtaDependency(packageName, version)
@@ -58,96 +58,100 @@ object SbtEta extends AutoPlugin {
 
   import autoImport._
 
-  private val etaCabal = TaskKey[Cabal]("eta-cabal", "Structure of the .cabal file.")
+  private lazy val etlas = settingKey[Etlas]("Helper for Etlas commands.")
+  private lazy val etaCabal = taskKey[Cabal]("Structure of the .cabal file.")
+  private lazy val etaPackage = taskKey[EtaPackage]("")
 
-  private val baseEtaSettings: Seq[Def.Setting[_]] = {
-    Seq(
-      baseDirectory in Eta := target.value / "eta",
-      target in Eta := target.value / "eta" / "dist",
+  private lazy val baseEtaSettings: Seq[Def.Setting[_]] = {
+    inConfig(Eta)(Seq(
+      baseDirectory := (target in Compile).value / "eta",
+      target := (target in Compile).value / "eta" / "dist",
+      // Plugin specific tasks
+      etlas := Etlas((baseDirectory in Eta).value, (target in Eta).value, EtaVersion((etaVersion in Eta).value)),
+      etaCabal := refreshCabalTask.value,
+      etaPackage := {
+        etlas.value.getEtaPackage((etaCabal in Eta).value, Logger(streams.value))
+      },
+      etaVersion := {
+        Etlas.etaVersion((baseDirectory in Eta).value, Logger(sLog.value)).friendlyVersion
+      },
+      etlasVersion := {
+        Etlas.etlasVersion((baseDirectory in Eta).value, Logger(sLog.value))
+      },
       // Standard tasks
-      clean in Eta := {
-        Etlas.clean((baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value))
+      clean := {
+        etlas.value.clean(Logger(streams.value))
       },
-      run in Eta := {
-        Etlas.runArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value), Cabal.Artifact.all)
+      run := {
+        etlas.value.runArtifacts((etaCabal in Eta).value, Logger(streams.value), Artifact.all)
       },
-      test in Eta := {
-        Etlas.testArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value), Cabal.Artifact.all)
+      test := {
+        etlas.value.testArtifacts((etaCabal in Eta).value, Logger(streams.value), Artifact.all)
       },
-      mainClass in Eta := {
+      mainClass := {
         (etaCompile in Compile).value
-        etaCabal.value.getMainClass
+        (etaCabal in Eta).value.getMainClass
       },
-      projectDependencies in Eta := {
-        Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(sLog.value), Artifact.not(Artifact.testSuite)) ++
-        Etlas.getMavenDependencies(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(sLog.value), Artifact.testSuite).map(_ % Test)
+      projectDependencies := {
+        etlas.value.getMavenDependencies((etaCabal in Eta).value, Logger(streams.value), Artifact.not(Artifact.testSuite)) ++
+        etlas.value.getMavenDependencies((etaCabal in Eta).value, Logger(streams.value), Artifact.testSuite).map(_ % Test)
       },
       // DSL
-      useLocalCabal in Eta := false,
-      language in Eta := Haskell2010,
-      extensions in Eta := Nil,
-      cppOptions in Eta := Nil,
-      ghcOptions in Eta := Nil,
-      includeDirs in Eta := Nil,
-      installIncludes in Eta := Nil,
-      testSuiteType in Eta := exitcodeTestSuite,
-      libraryDependencies in Eta := Seq(EtaDependency.base),
-      gitDependencies in Eta := Nil
-    ) ++
+      useLocalCabal := false,
+      language := Haskell2010,
+      extensions := Nil,
+      cppOptions := Nil,
+      ghcOptions := Nil,
+      includeDirs := Nil,
+      installIncludes := Nil,
+      testSuiteType := exitcodeTestSuite,
+      libraryDependencies := Seq(EtaDependency.base),
+      gitDependencies := Nil
+    )) ++
       makeSettings(EtaLib, Compile, Artifact.library) ++
       makeSettings(EtaExe, Compile, Artifact.executable) ++
       makeSettings(EtaTest,   Test, Artifact.or(Artifact.library, Artifact.testSuite))
   }
 
-  private def makeSettings(config: Configuration, base: Configuration, filter: Cabal.Artifact.Filter): Seq[Def.Setting[_]] = {
-    Seq(
-      sourceDirectory in config := (sourceDirectory in base).value / "eta",
-      sourceDirectories in config := Seq((sourceDirectory in config).value),
-      exportedProductJars in config := {
+  private def makeSettings(config: Configuration, base: Configuration, filter: Artifact.Filter): Seq[Def.Setting[_]] = {
+    inConfig(config)(Seq(
+      sourceDirectory := (sourceDirectory in base).value / "eta",
+      sourceDirectories := Seq(sourceDirectory.value),
+      exportedProductJars := {
         val log = Logger(streams.value)
         (etaCompile in base).value
-        etaCabal.value.getArtifactsJars((target in Eta).value, EtaVersion(etaVersion.value), filter).flatMap { jar =>
+        (etaCabal in Eta).value.getArtifactsJars((target in Eta).value, EtaVersion((etaVersion in Eta).value), filter).flatMap { jar =>
           log.info("Eta artifact JAR: " + jar.getCanonicalPath)
           PathFinder(jar).classpath
         }
       },
-      unmanagedClasspath in config := {
-        Etlas.getClasspath(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value), filter)
+      managedClasspath := {
+        (etlas in Eta).value.getClasspath((etaCabal in Eta).value, Logger(streams.value), filter)
       },
       // DSL
-      hsMain in config := None,
-      exposedModules in config := Nil,
-      language in config := (language in Eta).value,
-      extensions in config := (extensions in Eta).value,
-      cppOptions in config := (cppOptions in Eta).value,
-      ghcOptions in config := (ghcOptions in Eta).value,
-      includeDirs in config := (includeDirs in Eta).value,
-      installIncludes in config := (installIncludes in Eta).value,
-      testSuiteType in config := (testSuiteType in Eta).value,
-      libraryDependencies in config := (libraryDependencies in Eta).value,
-      gitDependencies in config := (gitDependencies in Eta).value
-    )
+      hsMain := None,
+      exposedModules := Nil,
+      language := (language in Eta).value,
+      extensions := (extensions in Eta).value,
+      cppOptions := (cppOptions in Eta).value,
+      ghcOptions := (ghcOptions in Eta).value,
+      includeDirs := (includeDirs in Eta).value,
+      installIncludes := (installIncludes in Eta).value,
+      testSuiteType := (testSuiteType in Eta).value,
+      libraryDependencies := (libraryDependencies in Eta).value,
+      gitDependencies := (gitDependencies in Eta).value
+    ))
   }
 
-  val baseProjectSettings: Seq[Def.Setting[_]] = baseEtaSettings ++ Seq(
+  lazy val baseProjectSettings: Seq[Def.Setting[_]] = baseEtaSettings ++ Seq(
 
     // Specific Eta tasks
 
-    etaCabal := {
-      refreshCabal(Project.extract(state.value), Logger(sLog.value))
-    },
-    etaVersion := {
-      Etlas.etaVersion((baseDirectory in Eta).value, Logger(sLog.value)).friendlyVersion
-    },
-    etlasVersion := {
-      Etlas.etlasVersion((baseDirectory in Eta).value, Logger(sLog.value))
-    },
-
     etaCompile in Compile := {
-      Etlas.build(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value))
+      (etlas in Eta).value.build((etaCabal in Eta).value, Logger(streams.value))
     },
     etaCompile in Test := {
-      Etlas.buildArtifacts(etaCabal.value, (baseDirectory in Eta).value, (target in Eta).value, EtaVersion(etaVersion.value), Logger(streams.value), Artifact.testSuite)
+      (etlas in Eta).value.buildArtifacts((etaCabal in Eta).value, Logger(streams.value), Artifact.testSuite)
     },
 
     // Standard tasks override
@@ -167,14 +171,17 @@ object SbtEta extends AutoPlugin {
     libraryDependencies ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaExe).value),
     libraryDependencies ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaTest).value).map(_ % Test),
 
-    unmanagedJars in Compile ++= (unmanagedClasspath in EtaLib).value,
+    unmanagedJars in Compile ++= (managedClasspath in EtaLib).value,
     unmanagedJars in Compile ++= (exportedProductJars in EtaLib).value,
+    exportedProductJars in Compile ++= (exportedProductJars in EtaLib).value,
 
-    unmanagedJars in Compile ++= (unmanagedClasspath in EtaExe).value,
-    unmanagedJars in Compile ++= (exportedProductJars in EtaExe).value,
+    unmanagedJars in Runtime ++= (managedClasspath in EtaExe).value,
+    unmanagedJars in Runtime ++= (exportedProductJars in EtaExe).value,
+    exportedProductJars in Runtime ++= (exportedProductJars in EtaExe).value,
 
-    unmanagedJars in Test ++= (unmanagedClasspath in EtaTest).value,
+    unmanagedJars in Test ++= (managedClasspath in EtaTest).value,
     unmanagedJars in Test ++= (exportedProductJars in EtaTest).value,
+    exportedProductJars in Test ++= (exportedProductJars in EtaTest).value,
 
     compile in Compile := {
       (etaCompile in Compile).value
@@ -200,102 +207,143 @@ object SbtEta extends AutoPlugin {
     watchSources ++= ((sourceDirectory in EtaExe).value ** "*").get(),
     watchSources ++= ((sourceDirectory in EtaTest).value ** "*").get(),
 
-    commands ++= Seq(etaInitCommand, etaRefreshCommand, etaReplCommand)
+    commands ++= Seq(etaInitCommand, etaReplCommand)
   )
 
   override def projectSettings: Seq[Def.Setting[_]] = baseProjectSettings
   override def projectConfigurations: Seq[Configuration] = Seq(Eta, EtaLib, EtaExe, EtaTest)
 
-  private def getFilePaths(extracted: Extracted, key: SettingKey[Seq[File]], config: Configuration): Seq[String] = {
-    extracted.get(key in config).map { file =>
-      IO.relativize(extracted.get(baseDirectory in Eta), file).getOrElse(file.getCanonicalPath)
+  private def getFilePaths(cwd: File, files: Seq[File]): Seq[String] = {
+    files.map { file =>
+      IO.relativize(cwd, file).getOrElse(file.getCanonicalPath)
     }
   }
 
-  private def getEtaBuildDependencies(extracted: Extracted, config: Configuration): Seq[String] = {
-    EtaDependency.getAllEtaDependencies(extracted.get(libraryDependencies in config))
-      .map(EtaDependency.toCabalDependency)
+  private def getEtaBuildDependencies(dependencies: Seq[ModuleID]): Seq[String] = {
+    EtaDependency.getAllEtaDependencies(dependencies).map(EtaDependency.toCabalDependency)
   }
 
-  private def getEtaMavenDependencies(extracted: Extracted, config: Configuration): Seq[String] = {
-    EtaDependency.getAllMavenDependencies(extracted.get(libraryDependencies in config))
+  private def getEtaMavenDependencies(dependencies: Seq[ModuleID]): Seq[String] = {
+    EtaDependency.getAllMavenDependencies(dependencies)
       .map(_.toString())
   }
 
-  private def refreshCabal(extracted: Extracted, log: Logger): Cabal = {
-    val cwd = extracted.get(baseDirectory in Eta)
+  private def getProductsClasspath: Def.Initialize[Task[Classpath]] = {
+    val selectDeps  = ScopeFilter(inDependencies(ThisProject, includeRoot = false))
+    val productJars = ((exportedProductJarsIfMissing in Compile) ?? Nil).all(selectDeps)
+    Def.task { productJars.value.flatten }
+  }
 
-    val cabal = if (extracted.get(useLocalCabal in Eta)) {
-      log.info("Flag `useLocalCabal in Eta` set to `true`. Uses local .cabal file in root folder.")
-      Cabal.parseCabal(cwd, log)
-    } else {
-      val projectName = extracted.get(name) + "-eta"
-      val projectVersion = EtaDependency.getPackageVersion(extracted.get(version))
+  private def getEtaPackagesTask: Def.Initialize[Task[Seq[EtaPackage]]] = {
+    val selectDeps  = ScopeFilter(inDependencies(ThisProject, includeRoot = false))
+    val allPackages = (etaPackage in Eta).?.all(selectDeps)
+    Def.task { allPackages.value.flatten }
+  }
 
-      val library = Library(
-        name = projectName,
-        sourceDirectories = getFilePaths(extracted, sourceDirectories, EtaLib),
-        exposedModules = extracted.get(exposedModules in EtaLib),
-        buildDependencies = getEtaBuildDependencies(extracted, EtaLib),
-        mavenDependencies = getEtaMavenDependencies(extracted, EtaLib),
-        gitDependencies = extracted.get(gitDependencies in EtaLib),
-        cppOptions = extracted.get(cppOptions in EtaLib),
-        ghcOptions = extracted.get(ghcOptions in EtaLib),
-        extensions = extracted.get(extensions in EtaLib),
-        includeDirs = getFilePaths(extracted, includeDirs, EtaLib),
-        installIncludes = extracted.get(installIncludes in EtaLib),
-        language = extracted.get(language in EtaLib)
+  private def createCabalTask: Def.Initialize[Task[Cabal]] = Def.task {
+    val cwd = (baseDirectory in Eta).value
+    val projectName = name.value + "-eta"
+    val projectVersion = EtaDependency.getPackageVersion(version.value)
+
+    val library = Library(
+      name = projectName,
+      sourceDirectories = getFilePaths(cwd, (sourceDirectories in EtaLib).value),
+      exposedModules = (exposedModules in EtaLib).value,
+      buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaLib).value),
+      mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaLib).value),
+      gitDependencies = (gitDependencies in EtaLib).value,
+      cppOptions = (cppOptions in EtaLib).value,
+      ghcOptions = (ghcOptions in EtaLib).value,
+      extensions = (extensions in EtaLib).value,
+      includeDirs = getFilePaths(cwd, (includeDirs in EtaLib).value),
+      installIncludes = (installIncludes in EtaLib).value,
+      language = (language in EtaLib).value
+    )
+
+    val executable = (hsMain in EtaExe).value.map { main =>
+      Executable(
+        name = projectName + "-exe",
+        sourceDirectories = getFilePaths(cwd, (sourceDirectories in EtaExe).value),
+        buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaExe).value),
+        mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaExe).value),
+        gitDependencies = (gitDependencies in EtaExe).value,
+        hsMain = Some(main),
+        cppOptions = (cppOptions in EtaExe).value,
+        ghcOptions = (ghcOptions in EtaExe).value,
+        extensions = (extensions in EtaExe).value,
+        includeDirs = getFilePaths(cwd, (includeDirs in EtaExe).value),
+        installIncludes = (installIncludes in EtaExe).value,
+        language = (language in EtaExe).value
       )
-
-      val executable = extracted.get(hsMain in EtaExe).map { main =>
-        Executable(
-          name = projectName + "-exe",
-          sourceDirectories = getFilePaths(extracted, sourceDirectories, EtaExe),
-          buildDependencies = getEtaBuildDependencies(extracted, EtaExe),
-          mavenDependencies = getEtaMavenDependencies(extracted, EtaExe),
-          gitDependencies = extracted.get(gitDependencies in EtaExe),
-          hsMain = Some(main),
-          cppOptions = extracted.get(cppOptions in EtaExe),
-          ghcOptions = extracted.get(ghcOptions in EtaExe),
-          extensions = extracted.get(extensions in EtaExe),
-          includeDirs = getFilePaths(extracted, includeDirs, EtaExe),
-          installIncludes = extracted.get(installIncludes in EtaExe),
-          language = extracted.get(language in EtaExe)
-        ).addLibrary(library)
-      }
-
-      val testSuite = extracted.get(hsMain in EtaTest).map { main =>
-        TestSuite(
-          name = projectName + "-test",
-          sourceDirectories = getFilePaths(extracted, sourceDirectories, EtaTest),
-          buildDependencies = getEtaBuildDependencies(extracted, EtaTest),
-          mavenDependencies = getEtaMavenDependencies(extracted, EtaTest),
-          gitDependencies = extracted.get(gitDependencies in EtaTest),
-          hsMain = Some(main),
-          cppOptions = extracted.get(cppOptions in EtaTest),
-          ghcOptions = extracted.get(ghcOptions in EtaTest),
-          extensions = extracted.get(extensions in EtaTest),
-          includeDirs = getFilePaths(extracted, includeDirs, EtaTest),
-          installIncludes = extracted.get(installIncludes in EtaTest),
-          language = extracted.get(language in EtaTest),
-          testSuiteType = extracted.get(testSuiteType in EtaTest)
-        ).addLibrary(library)
-      }
-
-      val cabal = Cabal(
-        projectName = projectName,
-        projectVersion = projectVersion,
-        projectLibrary = Some(library),
-        executables = executable.toList,
-        testSuites = testSuite.toList
-      )
-
-      Cabal.writeCabal(cwd, cabal, log)
     }
 
-    //log.info(cabal.toString)
+    val testSuite = (hsMain in EtaTest).value.map { main =>
+      TestSuite(
+        name = projectName + "-test",
+        sourceDirectories = getFilePaths(cwd, (sourceDirectories in EtaTest).value),
+        buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaTest).value),
+        mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaTest).value),
+        gitDependencies = (gitDependencies in EtaTest).value,
+        hsMain = Some(main),
+        cppOptions = (cppOptions in EtaTest).value,
+        ghcOptions = (ghcOptions in EtaTest).value,
+        extensions = (extensions in EtaTest).value,
+        includeDirs = getFilePaths(cwd, (includeDirs in EtaTest).value),
+        installIncludes = (installIncludes in EtaTest).value,
+        language = (language in EtaTest).value,
+        testSuiteType = (testSuiteType in EtaTest).value
+      )
+    }
 
-    cabal
+    Cabal(
+      projectName = projectName,
+      projectVersion = projectVersion,
+      projectLibrary = Some(library),
+      executables = executable.toList,
+      testSuites = testSuite.toList
+    )
+  }
+
+  private case class ResolvedCabal(classpath: Classpath)
+
+  private def resolveCabal(cabal: Cabal, cwd: File, dist: File, etaVersion: String, log: Logger): ResolvedCabal = {
+    val tmpCabal = cabal.getTmpCabal
+    val tmpPath = cwd / "tmp"
+    val etlas = Etlas(tmpPath, dist, EtaVersion(etaVersion))
+    IO.createDirectory(tmpPath)
+    Cabal.writeCabal(tmpPath, tmpCabal, Nil, log)
+    Cabal.writeCabalProject(tmpPath, tmpCabal, Nil, log)
+    ResolvedCabal(
+      classpath = etlas.getClasspath(tmpCabal, log, Artifact.all)
+    )
+  }
+
+  private def refreshCabalTask: Def.Initialize[Task[Cabal]] = Def.task {
+    val log = Logger(streams.value)
+    (useLocalCabal in Eta).?.value match {
+      case None =>
+        log.info("There is not Eta project.")
+        Cabal.empty
+      case Some(true) =>
+        log.info("Flag `useLocalCabal in Eta` set to `true`. Uses local .cabal file in root folder.")
+        Cabal.parseCabal((baseDirectory in Eta).value, log)
+      case Some(false) =>
+        val cwd = (baseDirectory in Eta).value
+        val dist = (target in Eta).value
+        val version = (etaVersion in Eta).value
+        val cabal = createCabalTask.value
+        val resolved = resolveCabal(cabal, cwd, dist, version, log)
+        val etaPackages = getEtaPackagesTask.value
+        val classesFolder = (classDirectory in Compile).value
+        val productsClasspath = getProductsClasspath.value
+        val fullClasspath = (productsClasspath ++ resolved.classpath).map(_.data) :+ classesFolder
+
+        Cabal.writeCabal(cwd, cabal, etaPackages, log)
+        Cabal.writeCabalProject(cwd, cabal, etaPackages, log)
+        Cabal.writeCabalProjectLocal(cwd, cabal, etaPackages, fullClasspath, log)
+
+        cabal
+    }
   }
 
   private def etaInitCommand: Command = Command.command("eta-init") { state =>
@@ -321,18 +369,12 @@ object SbtEta extends AutoPlugin {
     }
   }
 
-  private def etaRefreshCommand: Command = Command.command("eta-refresh") { state =>
-    val extracted = Project.extract(state)
-    refreshCabal(extracted, Logger(extracted.get(sLog)))
-    state
-  }
-
   private def etaReplCommand: Command = Command.command("eta-repl") { state =>
     val extracted = Project.extract(state)
     Etlas.repl(
       extracted.get(baseDirectory in Eta),
       extracted.get(target in Eta),
-      EtaVersion(extracted.get(etaVersion)),
+      EtaVersion(extracted.get(etaVersion in Eta)),
       extracted.get(sLog)
     ).get
     println()
