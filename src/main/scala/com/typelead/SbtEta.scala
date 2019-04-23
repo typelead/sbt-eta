@@ -23,6 +23,7 @@ object SbtEta extends AutoPlugin {
     lazy val etlasUseLocal   = settingKey[Boolean]("If `true`, use instance of Etlas installed in your system. If `false`, use Etlas specified by project settings.")
     lazy val etlasPath       = settingKey[File]("Specifies the path to Etlas executable used in this build.")
     lazy val etlasRepository = settingKey[String]("URL address of Etlas repository. Do not change!")
+    lazy val etaSendMetrics  = settingKey[Boolean]("Would you like to help us make Eta the fastest growing programming language, and help pure functional programming become mainstream?")
     lazy val etaCompile      = taskKey[Unit]("Build your Eta project.")
 
     // Eta configuration DSL
@@ -63,7 +64,7 @@ object SbtEta extends AutoPlugin {
 
   private lazy val etlas = settingKey[Etlas]("Helper for Etlas commands.")
   private lazy val etaCabal = taskKey[Cabal]("Structure of the .cabal file.")
-  private lazy val etaPackage = taskKey[EtaPackage]("Sturcture of Eta package.")
+  private lazy val etaPackage = taskKey[EtaPackage]("Structure of Eta package.")
 
   private lazy val baseEtaSettings: Seq[Def.Setting[_]] = {
     inConfig(Eta)(Seq(
@@ -75,11 +76,11 @@ object SbtEta extends AutoPlugin {
       etlasRepository := Etlas.DEFAULT_ETLAS_REPO,
       etlas := {
         if (etlasUseLocal.value) {
-          Etlas(None, baseDirectory.value, target.value, EtaVersion(etaVersion.value))
+          Etlas(None, baseDirectory.value, target.value, EtaVersion(etaVersion.value), etaSendMetrics.value)
         } else {
           val installPath = etlasPath.value
           Etlas.download(etlasRepository.value, installPath, etlasVersion.value, Logger(sLog.value))
-          Etlas(Some(installPath), baseDirectory.value, target.value, EtaVersion(etaVersion.value))
+          Etlas(Some(installPath), baseDirectory.value, target.value, EtaVersion(etaVersion.value), etaSendMetrics.value)
         }
       },
       etlasVersion := {
@@ -90,6 +91,7 @@ object SbtEta extends AutoPlugin {
         val installPath = if (etlasUseLocal.value) None else Some(etlasPath.value)
         Etlas.etaVersion(installPath, baseDirectory.value, Logger(sLog.value)).friendlyVersion
       },
+      etaSendMetrics := true,
       etaCabal := refreshCabalTask.value,
       etaPackage := {
         etlas.value.getEtaPackage(etaCabal.value, Logger(streams.value))
