@@ -1,11 +1,13 @@
 lazy val root = (project in file(".")).
   settings(
     inThisBuild(Seq(
-      scalaVersion := "2.12.8",
-      version      := "0.1.0-SNAPSHOT"
+      etaVersion    := "0.8.6b4",
+      etlasUseLocal := false,
+      etlasVersion  := "1.5.0.0",
+      scalaVersion  := "2.12.8",
+      version       := "0.1.0-SNAPSHOT"
     )),
     name := "example",
-    etaVersion := "0.8.6b5",
     exposedModules in EtaLib += "Example.Transform",
     libraryDependencies in EtaLib ++= Seq(
       eta("aeson"),

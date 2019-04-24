@@ -11,6 +11,10 @@ object SbtEta extends AutoPlugin {
   override def requires = plugins.JvmPlugin
   override def trigger  = noTrigger
 
+  override def buildSettings: Seq[Def.Setting[_]] = buildEtaSettings
+  override def projectSettings: Seq[Def.Setting[_]] = baseProjectSettings
+  override def projectConfigurations: Seq[Configuration] = Seq(autoImport.Eta, autoImport.EtaLib, autoImport.EtaExe, autoImport.EtaTest)
+
   object autoImport {
 
     lazy val Eta: Configuration = config("Eta")
@@ -18,9 +22,14 @@ object SbtEta extends AutoPlugin {
     lazy val EtaExe: Configuration = config("EtaExe")
     lazy val EtaTest: Configuration = config("EtaTest")
 
-    lazy val etaVersion   = settingKey[String]("Version of the Eta compiler.")
-    lazy val etlasVersion = settingKey[String]("Version of the Etlas build tool.")
-    lazy val etaCompile   = taskKey[Unit]("Build your Eta project.")
+    lazy val etaVersion      = settingKey[String]("Version of the Eta compiler.")
+    lazy val etlasVersion    = settingKey[String]("Version of the Etlas build tool.")
+    lazy val etlasUseLocal   = settingKey[Boolean]("If `true`, use instance of Etlas installed in your system. If `false`, use Etlas specified by project settings.")
+    lazy val etlasPath       = settingKey[File]("Specifies the path to Etlas executable used in this build.")
+    lazy val etlasRepository = settingKey[String]("URL address of Etlas repository. Do not change!")
+    lazy val etaSendMetrics  = settingKey[Boolean]("Would you like to help us make Eta the fastest growing programming language, and help pure functional programming become mainstream?")
+
+    lazy val etaCompile      = taskKey[Unit]("Build your Eta project.")
 
     // Eta configuration DSL
 
@@ -60,41 +69,52 @@ object SbtEta extends AutoPlugin {
 
   private lazy val etlas = settingKey[Etlas]("Helper for Etlas commands.")
   private lazy val etaCabal = taskKey[Cabal]("Structure of the .cabal file.")
-  private lazy val etaPackage = taskKey[EtaPackage]("")
+  private lazy val etaPackage = taskKey[EtaPackage]("Structure of Eta package.")
+
+  private lazy val buildEtaSettings: Seq[Def.Setting[_]] = {
+    inThisBuild(Seq(
+      etaSendMetrics := true,
+      etlasUseLocal := true,
+      etlasPath := baseDirectory.value / "project" / "target" / "etlas" / "etlas",
+      etlasRepository := Etlas.DEFAULT_ETLAS_REPO,
+      etlasVersion := {
+        val installPath = if (etlasUseLocal.value) None else Some(etlasPath.value)
+        Etlas.etlasVersion(installPath, baseDirectory.value, Logger(sLog.value))
+      },
+      etaVersion := {
+        val installPath = if (etlasUseLocal.value) None else Some(etlasPath.value)
+        Etlas.etaVersion(installPath, baseDirectory.value, Logger(sLog.value)).friendlyVersion
+      }
+    ))
+  }
 
   private lazy val baseEtaSettings: Seq[Def.Setting[_]] = {
     inConfig(Eta)(Seq(
       baseDirectory := (target in Compile).value / "eta",
       target := (target in Compile).value / "eta" / "dist",
       // Plugin specific tasks
-      etlas := Etlas((baseDirectory in Eta).value, (target in Eta).value, EtaVersion((etaVersion in Eta).value)),
+      etlas := getEtlasSetting.value,
       etaCabal := refreshCabalTask.value,
       etaPackage := {
-        etlas.value.getEtaPackage((etaCabal in Eta).value, Logger(streams.value))
-      },
-      etaVersion := {
-        Etlas.etaVersion((baseDirectory in Eta).value, Logger(sLog.value)).friendlyVersion
-      },
-      etlasVersion := {
-        Etlas.etlasVersion((baseDirectory in Eta).value, Logger(sLog.value))
+        etlas.value.getEtaPackage(etaCabal.value, Logger(streams.value))
       },
       // Standard tasks
       clean := {
         etlas.value.clean(Logger(streams.value))
       },
       run := {
-        etlas.value.runArtifacts((etaCabal in Eta).value, Logger(streams.value), Artifact.all)
+        etlas.value.runArtifacts(etaCabal.value, Logger(streams.value), Artifact.all)
       },
       test := {
-        etlas.value.testArtifacts((etaCabal in Eta).value, Logger(streams.value), Artifact.all)
+        etlas.value.testArtifacts(etaCabal.value, Logger(streams.value), Artifact.all)
       },
       mainClass := {
         (etaCompile in Compile).value
-        (etaCabal in Eta).value.getMainClass
+        etaCabal.value.getMainClass
       },
       projectDependencies := {
-        etlas.value.getMavenDependencies((etaCabal in Eta).value, Logger(streams.value), Artifact.not(Artifact.testSuite)) ++
-        etlas.value.getMavenDependencies((etaCabal in Eta).value, Logger(streams.value), Artifact.testSuite).map(_ % Test)
+        etlas.value.getMavenDependencies(etaCabal.value, Logger(streams.value), Artifact.not(Artifact.testSuite)) ++
+        etlas.value.getMavenDependencies(etaCabal.value, Logger(streams.value), Artifact.testSuite).map(_ % Test)
       },
       // DSL
       useLocalCabal := false,
@@ -120,7 +140,7 @@ object SbtEta extends AutoPlugin {
       exportedProductJars := {
         val log = Logger(streams.value)
         (etaCompile in base).value
-        (etaCabal in Eta).value.getArtifactsJars((target in Eta).value, EtaVersion((etaVersion in Eta).value), filter).flatMap { jar =>
+        (etaCabal in Eta).value.getArtifactsJars((target in Eta).value, EtaVersion((etaVersion in ThisBuild).value), filter).flatMap { jar =>
           log.info("Eta artifact JAR: " + jar.getCanonicalPath)
           PathFinder(jar).classpath
         }
@@ -210,12 +230,30 @@ object SbtEta extends AutoPlugin {
     commands ++= Seq(etaInitCommand, etaReplCommand)
   )
 
-  override def projectSettings: Seq[Def.Setting[_]] = baseProjectSettings
-  override def projectConfigurations: Seq[Configuration] = Seq(Eta, EtaLib, EtaExe, EtaTest)
+  private def getEtlasSetting: Def.Initialize[Etlas] = Def.setting {
+    // Global settings
+    val useLocal = (etlasUseLocal in ThisBuild).value
+    val etlasVer = (etlasVersion in ThisBuild).value
+    val etlasRepo = (etlasRepository in ThisBuild).value
+    val etaVer = EtaVersion((etaVersion in ThisBuild).value)
+    val installPath = (etlasPath in ThisBuild).value
+    val sendMetricsFlag = (etaSendMetrics in ThisBuild).value
+    // Project settings
+    val workDir = baseDirectory.value
+    val dist = target.value
+    val log = Logger(sLog.value)
+    // Configure Etlas
+    if (useLocal) {
+      Etlas(None, workDir, dist, etaVer, sendMetricsFlag)
+    } else {
+      Etlas.download(etlasRepo, installPath, etlasVer, log)
+      Etlas(Some(installPath), workDir, dist, etaVer, sendMetricsFlag)
+    }
+  }
 
-  private def getFilePaths(cwd: File, files: Seq[File]): Seq[String] = {
+  private def getFilePaths(workDir: File, files: Seq[File]): Seq[String] = {
     files.map { file =>
-      IO.relativize(cwd, file).getOrElse(file.getCanonicalPath)
+      IO.relativize(workDir, file).getOrElse(file.getCanonicalPath)
     }
   }
 
@@ -241,13 +279,13 @@ object SbtEta extends AutoPlugin {
   }
 
   private def createCabalTask: Def.Initialize[Task[Cabal]] = Def.task {
-    val cwd = (baseDirectory in Eta).value
+    val workDir = (baseDirectory in Eta).value
     val projectName = name.value + "-eta"
     val projectVersion = EtaDependency.getPackageVersion(version.value)
 
     val library = Library(
       name = projectName,
-      sourceDirectories = getFilePaths(cwd, (sourceDirectories in EtaLib).value),
+      sourceDirectories = getFilePaths(workDir, (sourceDirectories in EtaLib).value),
       exposedModules = (exposedModules in EtaLib).value,
       buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaLib).value),
       mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaLib).value),
@@ -255,7 +293,7 @@ object SbtEta extends AutoPlugin {
       cppOptions = (cppOptions in EtaLib).value,
       ghcOptions = (ghcOptions in EtaLib).value,
       extensions = (extensions in EtaLib).value,
-      includeDirs = getFilePaths(cwd, (includeDirs in EtaLib).value),
+      includeDirs = getFilePaths(workDir, (includeDirs in EtaLib).value),
       installIncludes = (installIncludes in EtaLib).value,
       language = (language in EtaLib).value
     )
@@ -263,7 +301,7 @@ object SbtEta extends AutoPlugin {
     val executable = (hsMain in EtaExe).value.map { main =>
       Executable(
         name = projectName + "-exe",
-        sourceDirectories = getFilePaths(cwd, (sourceDirectories in EtaExe).value),
+        sourceDirectories = getFilePaths(workDir, (sourceDirectories in EtaExe).value),
         buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaExe).value),
         mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaExe).value),
         gitDependencies = (gitDependencies in EtaExe).value,
@@ -271,7 +309,7 @@ object SbtEta extends AutoPlugin {
         cppOptions = (cppOptions in EtaExe).value,
         ghcOptions = (ghcOptions in EtaExe).value,
         extensions = (extensions in EtaExe).value,
-        includeDirs = getFilePaths(cwd, (includeDirs in EtaExe).value),
+        includeDirs = getFilePaths(workDir, (includeDirs in EtaExe).value),
         installIncludes = (installIncludes in EtaExe).value,
         language = (language in EtaExe).value
       )
@@ -280,7 +318,7 @@ object SbtEta extends AutoPlugin {
     val testSuite = (hsMain in EtaTest).value.map { main =>
       TestSuite(
         name = projectName + "-test",
-        sourceDirectories = getFilePaths(cwd, (sourceDirectories in EtaTest).value),
+        sourceDirectories = getFilePaths(workDir, (sourceDirectories in EtaTest).value),
         buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaTest).value),
         mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaTest).value),
         gitDependencies = (gitDependencies in EtaTest).value,
@@ -288,7 +326,7 @@ object SbtEta extends AutoPlugin {
         cppOptions = (cppOptions in EtaTest).value,
         ghcOptions = (ghcOptions in EtaTest).value,
         extensions = (extensions in EtaTest).value,
-        includeDirs = getFilePaths(cwd, (includeDirs in EtaTest).value),
+        includeDirs = getFilePaths(workDir, (includeDirs in EtaTest).value),
         installIncludes = (installIncludes in EtaTest).value,
         language = (language in EtaTest).value,
         testSuiteType = (testSuiteType in EtaTest).value
@@ -306,15 +344,14 @@ object SbtEta extends AutoPlugin {
 
   private case class ResolvedCabal(classpath: Classpath)
 
-  private def resolveCabal(cabal: Cabal, cwd: File, dist: File, etaVersion: String, log: Logger): ResolvedCabal = {
+  private def resolveCabal(etlas: Etlas, cabal: Cabal, workDir: File, log: Logger): ResolvedCabal = {
     val tmpCabal = cabal.getTmpCabal
-    val tmpPath = cwd / "tmp"
-    val etlas = Etlas(tmpPath, dist, EtaVersion(etaVersion))
+    val tmpPath = workDir / "tmp"
     IO.createDirectory(tmpPath)
     Cabal.writeCabal(tmpPath, tmpCabal, Nil, log)
     Cabal.writeCabalProject(tmpPath, tmpCabal, Nil, log)
     ResolvedCabal(
-      classpath = etlas.getClasspath(tmpCabal, log, Artifact.all)
+      classpath = etlas.changeWorkDir(tmpPath).getClasspath(tmpCabal, log, Artifact.all)
     )
   }
 
@@ -328,19 +365,17 @@ object SbtEta extends AutoPlugin {
         log.info("Flag `useLocalCabal in Eta` set to `true`. Uses local .cabal file in root folder.")
         Cabal.parseCabal((baseDirectory in Eta).value, log)
       case Some(false) =>
-        val cwd = (baseDirectory in Eta).value
-        val dist = (target in Eta).value
-        val version = (etaVersion in Eta).value
+        val workDir = (baseDirectory in Eta).value
         val cabal = createCabalTask.value
-        val resolved = resolveCabal(cabal, cwd, dist, version, log)
+        val resolved = resolveCabal((etlas in Eta).value, cabal, workDir, log)
         val etaPackages = getEtaPackagesTask.value
         val classesFolder = (classDirectory in Compile).value
         val productsClasspath = getProductsClasspath.value
         val fullClasspath = (productsClasspath ++ resolved.classpath).map(_.data) :+ classesFolder
 
-        Cabal.writeCabal(cwd, cabal, etaPackages, log)
-        Cabal.writeCabalProject(cwd, cabal, etaPackages, log)
-        Cabal.writeCabalProjectLocal(cwd, cabal, etaPackages, fullClasspath, log)
+        Cabal.writeCabal(workDir, cabal, etaPackages, log)
+        Cabal.writeCabalProject(workDir, cabal, etaPackages, log)
+        Cabal.writeCabalProjectLocal(workDir, cabal, etaPackages, fullClasspath, log)
 
         cabal
     }
@@ -348,15 +383,14 @@ object SbtEta extends AutoPlugin {
 
   private def etaInitCommand: Command = Command.command("eta-init") { state =>
     val extracted = Project.extract(state)
-    val cwd = extracted.get(baseDirectory in Eta)
+    val workDir = extracted.get(baseDirectory in Eta)
     val log = Logger(extracted.get(sLog))
-    Cabal.getCabalFile(cwd) match {
+    Cabal.getCabalFile(workDir) match {
       case Some(file) =>
-        log.warn(s"Found '$file' in '${cwd.getCanonicalPath}'. Could not initialize new Eta project.")
+        log.warn(s"Found '$file' in '${workDir.getCanonicalPath}'. Could not initialize new Eta project.")
         state
       case None =>
-        Etlas.init(
-          cwd,
+        extracted.get(etlas in Eta).init(
           extracted.get(normalizedName),
           extracted.get(description),
           EtaDependency.getPackageVersion(extracted.get(version)),
@@ -371,12 +405,7 @@ object SbtEta extends AutoPlugin {
 
   private def etaReplCommand: Command = Command.command("eta-repl") { state =>
     val extracted = Project.extract(state)
-    Etlas.repl(
-      extracted.get(baseDirectory in Eta),
-      extracted.get(target in Eta),
-      EtaVersion(extracted.get(etaVersion in Eta)),
-      extracted.get(sLog)
-    ).get
+    extracted.get(etlas in Eta).repl(extracted.get(sLog)).get
     println()
     state
   }
