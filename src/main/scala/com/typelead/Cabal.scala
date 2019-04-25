@@ -61,7 +61,10 @@ final case class Cabal(projectName: String,
 
   def isEmpty: Boolean = projectName == NONAME || projectVersion == NOVERSION || artifacts.isEmpty
 
-  def getTmpCabal: Cabal = {
+  def getTmpCabal(etaPackages: Seq[EtaPackage]): Cabal = {
+    val allBuildDependencies = (buildDependencies ++ etaPackages.flatMap(_.cabal.buildDependencies)).distinct
+    val allMavenDependencies = (mavenDependencies ++ etaPackages.flatMap(_.cabal.mavenDependencies)).distinct
+    val allGitDependencies   = distinctBy(gitDependencies ++ etaPackages.flatMap(_.cabal.gitDependencies))(_.packageName)
     Cabal(
       projectName = projectName,
       projectVersion = projectVersion,
@@ -69,9 +72,9 @@ final case class Cabal(projectName: String,
         name = projectName,
         sourceDirectories = Nil,
         exposedModules = Nil,
-        buildDependencies = buildDependencies,
-        mavenDependencies = mavenDependencies,
-        gitDependencies   = gitDependencies,
+        buildDependencies = allBuildDependencies,
+        mavenDependencies = allMavenDependencies,
+        gitDependencies   = allGitDependencies,
         cppOptions = Nil,
         ghcOptions = Nil,
         extensions = Nil,
@@ -90,6 +93,10 @@ object Cabal {
 
   private val NONAME = "<--noname-->"
   private val NOVERSION = "<--noversion-->"
+
+  private[typelead] val CABAL_PROJECT = "cabal.project"
+  private[typelead] val CABAL_PROJECT_LOCAL = "cabal.project.local"
+  private[typelead] val CABAL_PROJECT_FREEZE = "cabal.project.freeze"
 
   val empty: Cabal = Cabal(
     projectName = NONAME,
@@ -301,7 +308,7 @@ object Cabal {
 
   // --- Write cabal.project file
   def writeCabalProject(cwd: File, cabal: Cabal, etaPackages: Seq[EtaPackage], log: Logger): Unit = {
-    log.info(s"Rewrite 'cabal.project' in '${cwd.getCanonicalFile}'.")
+    log.info(s"Rewrite '$CABAL_PROJECT' in '${cwd.getCanonicalFile}'.")
     val lines = Seq("packages: .", "") ++
       writeLines(etaPackages.map(_.packageDb.getCanonicalPath), "package-dbs:\n  ", "  ") ++
       cabal.gitDependencies.flatMap {
@@ -320,18 +327,18 @@ object Cabal {
             }
           ) ++ subDir.map(dir => "  subdir: " + dir) :+ ""
       }
-    IO.writeLines(cwd / "cabal.project", lines)
+    IO.writeLines(cwd / CABAL_PROJECT, lines)
   }
 
   // --- Write cabal.project.local file
   def writeCabalProjectLocal(cwd: File, cabal: Cabal, etaPackages: Seq[EtaPackage], classpath: Seq[File], log: Logger): Unit = {
-    log.info(s"Rewrite 'cabal.project.local' in '${cwd.getCanonicalFile}'.")
+    log.info(s"Rewrite '$CABAL_PROJECT_LOCAL' in '${cwd.getCanonicalFile}'.")
     val fullClasspath = etaPackages.flatMap(_.jars) ++ classpath
     val lines = Seq(
       s"""package ${cabal.projectName}""",
       s"""  eta-options: -cp "${fullClasspath.map(_.getCanonicalPath).mkString(":")}" """
     )
-    IO.writeLines(cwd / "cabal.project.local", lines)
+    IO.writeLines(cwd / CABAL_PROJECT_LOCAL, lines)
   }
 
   def writeCabal(cwd: File, cabal: Cabal, etaPackages: Seq[EtaPackage], log: Logger): Unit = {
@@ -366,7 +373,6 @@ object Cabal {
       }
       val lines = headers ++ libraryDefs ++ executableDefs ++ testSuiteDefs
 
-      IO.delete((cwd * "cabal.*").get())
       IO.writeLines(cwd / cabal.cabalName, lines)
     }
   }

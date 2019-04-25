@@ -227,9 +227,9 @@ object SbtEta extends AutoPlugin {
       (mainClass in Eta).value orElse (mainClass in (Compile, packageBin)).value
     },
 
-    watchSources ++= ((sourceDirectory in EtaLib).value ** "*").get(),
-    watchSources ++= ((sourceDirectory in EtaExe).value ** "*").get(),
-    watchSources ++= ((sourceDirectory in EtaTest).value ** "*").get(),
+    watchSources ++= (sourceDirectory in EtaLib ).value ** "*" get(),
+    watchSources ++= (sourceDirectory in EtaExe ).value ** "*" get(),
+    watchSources ++= (sourceDirectory in EtaTest).value ** "*" get(),
 
     commands ++= Seq(etaInitCommand, etaReplCommand, etaLanguages, etaExtensions)
   )
@@ -364,16 +364,18 @@ object SbtEta extends AutoPlugin {
     }
   }
 
-  private case class ResolvedCabal(classpath: Classpath)
+  private case class ResolvedCabal(classpath: Classpath, freezeFile: Option[File])
 
-  private def resolveCabal(etlas: Etlas, cabal: Cabal, workDir: File, log: Logger): ResolvedCabal = {
-    val tmpCabal = cabal.getTmpCabal
+  private def resolveCabal(etlas: Etlas, cabal: Cabal, etaPackages: Seq[EtaPackage], workDir: File, log: Logger): ResolvedCabal = {
+    val tmpCabal = cabal.getTmpCabal(etaPackages)
     val tmpPath = workDir / "tmp"
     IO.createDirectory(tmpPath)
+    IO.delete(tmpPath ** "*" get())
     Cabal.writeCabal(tmpPath, tmpCabal, Nil, log)
     Cabal.writeCabalProject(tmpPath, tmpCabal, Nil, log)
     ResolvedCabal(
-      classpath = etlas.changeWorkDir(tmpPath).getClasspath(tmpCabal, log, Artifact.all)
+      classpath  = etlas.changeWorkDir(tmpPath).getClasspath(tmpCabal, log, Artifact.all),
+      freezeFile = etlas.changeWorkDir(tmpPath).freeze(log)
     )
   }
 
@@ -389,15 +391,17 @@ object SbtEta extends AutoPlugin {
       case Some(false) =>
         val workDir = (baseDirectory in Eta).value
         val cabal = createCabalTask.value
-        val resolved = resolveCabal((etlas in Eta).value, cabal, workDir, log)
         val etaPackages = getEtaPackagesTask.value
+        val resolved = resolveCabal((etlas in Eta).value, cabal, etaPackages, workDir, log)
         val classesFolder = (classDirectory in Compile).value
         val productsClasspath = getProductsClasspath.value
         val fullClasspath = (productsClasspath ++ resolved.classpath).map(_.data) :+ classesFolder
 
+        IO.delete(workDir * "cabal.*" get())
         Cabal.writeCabal(workDir, cabal, etaPackages, log)
         Cabal.writeCabalProject(workDir, cabal, etaPackages, log)
         Cabal.writeCabalProjectLocal(workDir, cabal, etaPackages, fullClasspath, log)
+        resolved.freezeFile.foreach(IO.copyFile(_, workDir / CABAL_PROJECT_FREEZE))
 
         cabal
     }

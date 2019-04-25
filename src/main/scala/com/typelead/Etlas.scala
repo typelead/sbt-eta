@@ -25,7 +25,6 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
 
   def build(cabal: Cabal, log: Logger): Unit = {
     etlas(installPath, args("build"), workDir, log, filterLog = _ => true)
-    ()
   }
 
   def buildArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
@@ -36,7 +35,6 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
 
   def clean(log: Logger): Unit = {
     etlas(installPath, args("clean"), workDir, log)
-    ()
   }
 
   def deps(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
@@ -51,13 +49,13 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
     etlas(installPath, args("install", "--dependencies-only"), workDir, log)
   }
 
-  def freeze(log: Logger): Unit = {
+  def freeze(log: Logger): Option[File] = {
     etlas(installPath, args("freeze"), workDir, log)
+    (workDir * Cabal.CABAL_PROJECT_FREEZE).get().headOption
   }
 
   def run(log: Logger): Unit = {
     etlas(installPath, args("run"), workDir, log)
-    ()
   }
 
   def runArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
@@ -140,7 +138,7 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
 
   def getEtaPackage(cabal: Cabal, log: Logger): EtaPackage = {
     log.info("Resolve package dependencies...")
-    EtaPackage(cabal.projectName, cabal.getArtifactsJars(dist, etaVersion, Cabal.Artifact.library), getPackageDd(dist, etaVersion))
+    EtaPackage(cabal, cabal.getArtifactsJars(dist, etaVersion, Cabal.Artifact.library), getPackageDd(dist, etaVersion))
   }
 
 }
@@ -194,7 +192,7 @@ object Etlas {
 
     IO.createDirectory(workDir)
     val binary = getEtlasBinary(installPath)
-    logCmd(s"Running `$binary ${args.mkString(" ")} in '$workDir'`...")(log)
+    logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(log)
     val exitCode = synchronized(Process(binary +: args, workDir) ! logger)
 
     if (exitCode != 0) {
@@ -208,7 +206,7 @@ object Etlas {
   private def fork(installPath: Option[File], args: Seq[String], workDir: File, log: sbt.Logger): Unit = {
 
     val binary = getEtlasBinary(installPath)
-    logCmd(s"Running `$binary ${args.mkString(" ")} in '$workDir'`...")(Logger(log))
+    logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(Logger(log))
     val jpb = new JProcessBuilder((binary +: args).toArray: _ *)
     jpb.directory(workDir)
     jpb.redirectInput(Redirect.INHERIT)
