@@ -1,7 +1,7 @@
 package com.typelead
 
 import sbt._
-import EtaDependency.EtaVersion
+import EtaDependency.{EtaPackage, EtaVersion}
 
 final case class Cabal(projectName: String,
                        projectVersion: String,
@@ -98,8 +98,6 @@ object Cabal {
     executables = Nil,
     testSuites = Nil
   )
-
-  final case class EtaPackage(name: String, jars: Seq[File], packageDb: File)
 
   object TestSuiteTypes extends Enumeration {
     val exitcode: Value = Value("exitcode-stdio-1.0")

@@ -32,6 +32,8 @@ object EtaDependency {
     }
   }
 
+  final case class EtaPackage(name: String, jars: Seq[File], packageDb: File)
+
   // Eta version
 
   final case class EtaVersion(private val underlying: String) {

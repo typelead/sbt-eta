@@ -3,7 +3,7 @@ package com.typelead
 import java.lang.ProcessBuilder.Redirect
 import java.lang.{ProcessBuilder => JProcessBuilder}
 
-import EtaDependency.EtaVersion
+import EtaDependency.{EtaPackage, EtaVersion}
 import sbt.Keys._
 import sbt._
 import sbt.io.Using
@@ -113,6 +113,16 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
     }
   }
 
+  def getSupported(log: Logger): Etlas.Supported = {
+    etlas(installPath, args("exec", "eta", "--", "--supported-extensions"), workDir, log, saveOutput = true)
+      .foldLeft(Etlas.Supported(Nil, Nil)) {
+        case (Etlas.Supported(languages, extensions), str) if str.startsWith("Haskell") =>
+          Etlas.Supported(languages :+ str, extensions)
+        case (Etlas.Supported(languages, extensions), str) =>
+          Etlas.Supported(languages, extensions :+ str)
+      }
+  }
+
   // Resolve dependencies
 
   def getMavenDependencies(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Seq[ModuleID] = {
@@ -128,14 +138,16 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
       .classpath
   }
 
-  def getEtaPackage(cabal: Cabal, log: Logger): Cabal.EtaPackage = {
+  def getEtaPackage(cabal: Cabal, log: Logger): EtaPackage = {
     log.info("Resolve package dependencies...")
-    Cabal.EtaPackage(cabal.projectName, cabal.getArtifactsJars(dist, etaVersion, Cabal.Artifact.library), getPackageDd(dist, etaVersion))
+    EtaPackage(cabal.projectName, cabal.getArtifactsJars(dist, etaVersion, Cabal.Artifact.library), getPackageDd(dist, etaVersion))
   }
 
 }
 
 object Etlas {
+
+  final case class Supported(languages: Seq[String], extensions: Seq[String])
 
   private def getParam(name: String): Option[String] = {
     Option(System.getProperty(name)).map(_.toUpperCase)

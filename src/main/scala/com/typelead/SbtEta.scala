@@ -2,7 +2,7 @@ package com.typelead
 
 import sbt.Keys._
 import sbt.{Def, _}
-import EtaDependency.EtaVersion
+import EtaDependency.{EtaPackage, EtaVersion}
 
 object SbtEta extends AutoPlugin {
 
@@ -70,6 +70,7 @@ object SbtEta extends AutoPlugin {
   private lazy val etlas = settingKey[Etlas]("Helper for Etlas commands.")
   private lazy val etaCabal = taskKey[Cabal]("Structure of the .cabal file.")
   private lazy val etaPackage = taskKey[EtaPackage]("Structure of Eta package.")
+  private lazy val etaSupported = settingKey[Etlas.Supported]("Supported languages and extensions.")
 
   private lazy val buildEtaSettings: Seq[Def.Setting[_]] = {
     inThisBuild(Seq(
@@ -97,6 +98,9 @@ object SbtEta extends AutoPlugin {
       etaCabal := refreshCabalTask.value,
       etaPackage := {
         etlas.value.getEtaPackage(etaCabal.value, Logger(streams.value))
+      },
+      etaSupported := {
+        etlas.value.getSupported(Logger(sLog.value))
       },
       // Standard tasks
       clean := {
@@ -140,7 +144,7 @@ object SbtEta extends AutoPlugin {
       exportedProductJars := {
         val log = Logger(streams.value)
         (etaCompile in base).value
-        (etaCabal in Eta).value.getArtifactsJars((target in Eta).value, EtaVersion((etaVersion in ThisBuild).value), filter).flatMap { jar =>
+        (etaCabal in Eta).value.getArtifactsJars((target in Eta).value, getEtaVersion.value, filter).flatMap { jar =>
           log.info("Eta artifact JAR: " + jar.getCanonicalPath)
           PathFinder(jar).classpath
         }
@@ -227,15 +231,19 @@ object SbtEta extends AutoPlugin {
     watchSources ++= ((sourceDirectory in EtaExe).value ** "*").get(),
     watchSources ++= ((sourceDirectory in EtaTest).value ** "*").get(),
 
-    commands ++= Seq(etaInitCommand, etaReplCommand)
+    commands ++= Seq(etaInitCommand, etaReplCommand, etaLanguages, etaExtensions)
   )
+
+  private def getEtaVersion: Def.Initialize[EtaVersion] = Def.setting {
+    EtaVersion((etaVersion in ThisBuild).value)
+  }
 
   private def getEtlasSetting: Def.Initialize[Etlas] = Def.setting {
     // Global settings
     val useLocal = (etlasUseLocal in ThisBuild).value
     val etlasVer = (etlasVersion in ThisBuild).value
     val etlasRepo = (etlasRepository in ThisBuild).value
-    val etaVer = EtaVersion((etaVersion in ThisBuild).value)
+    val etaVer = getEtaVersion.value
     val installPath = (etlasPath in ThisBuild).value
     val sendMetricsFlag = (etaSendMetrics in ThisBuild).value
     // Project settings
@@ -279,6 +287,8 @@ object SbtEta extends AutoPlugin {
   }
 
   private def createCabalTask: Def.Initialize[Task[Cabal]] = Def.task {
+    val etaVer = getEtaVersion.value
+    val supported = (etaSupported in Eta).value
     val workDir = (baseDirectory in Eta).value
     val projectName = name.value + "-eta"
     val projectVersion = EtaDependency.getPackageVersion(version.value)
@@ -292,10 +302,10 @@ object SbtEta extends AutoPlugin {
       gitDependencies = (gitDependencies in EtaLib).value,
       cppOptions = (cppOptions in EtaLib).value,
       ghcOptions = (ghcOptions in EtaLib).value,
-      extensions = (extensions in EtaLib).value,
+      extensions = validateExtensions((extensions in EtaLib).value, supported, etaVer),
       includeDirs = getFilePaths(workDir, (includeDirs in EtaLib).value),
       installIncludes = (installIncludes in EtaLib).value,
-      language = (language in EtaLib).value
+      language = validateLanguage((language in EtaLib).value, supported, etaVer)
     )
 
     val executable = (hsMain in EtaExe).value.map { main =>
@@ -308,10 +318,10 @@ object SbtEta extends AutoPlugin {
         hsMain = Some(main),
         cppOptions = (cppOptions in EtaExe).value,
         ghcOptions = (ghcOptions in EtaExe).value,
-        extensions = (extensions in EtaExe).value,
+        extensions = validateExtensions((extensions in EtaExe).value, supported, etaVer),
         includeDirs = getFilePaths(workDir, (includeDirs in EtaExe).value),
         installIncludes = (installIncludes in EtaExe).value,
-        language = (language in EtaExe).value
+        language = validateLanguage((language in EtaExe).value, supported, etaVer)
       )
     }
 
@@ -325,10 +335,10 @@ object SbtEta extends AutoPlugin {
         hsMain = Some(main),
         cppOptions = (cppOptions in EtaTest).value,
         ghcOptions = (ghcOptions in EtaTest).value,
-        extensions = (extensions in EtaTest).value,
+        extensions = validateExtensions((extensions in EtaTest).value, supported, etaVer),
         includeDirs = getFilePaths(workDir, (includeDirs in EtaTest).value),
         installIncludes = (installIncludes in EtaTest).value,
-        language = (language in EtaTest).value,
+        language = validateLanguage((language in EtaTest).value, supported, etaVer),
         testSuiteType = (testSuiteType in EtaTest).value
       )
     }
@@ -340,6 +350,18 @@ object SbtEta extends AutoPlugin {
       executables = executable.toList,
       testSuites = testSuite.toList
     )
+  }
+
+  private def validateLanguage(language: String, supported: Etlas.Supported, etaVersion: EtaVersion): String = {
+    if (supported.languages contains language) language
+    else sys.error(s"Language '$language' is not recognized by Eta v${etaVersion.friendlyVersion}")
+  }
+
+  private def validateExtensions(extensions: Seq[String], supported: Etlas.Supported, etaVersion: EtaVersion): Seq[String] = {
+    extensions.map { extension =>
+      if (supported.extensions contains extension) extension
+      else sys.error(s"Extension '$extension' is not recognized by Eta v${etaVersion.friendlyVersion}")
+    }
   }
 
   private case class ResolvedCabal(classpath: Classpath)
@@ -407,6 +429,18 @@ object SbtEta extends AutoPlugin {
     val extracted = Project.extract(state)
     extracted.get(etlas in Eta).repl(extracted.get(sLog)).get
     println()
+    state
+  }
+
+  private def etaLanguages: Command = Command.command("eta-languages") { state =>
+    val extracted = Project.extract(state)
+    extracted.get(etaSupported in Eta).languages.foreach(println)
+    state
+  }
+
+  private def etaExtensions: Command = Command.command("eta-extensions") { state =>
+    val extracted = Project.extract(state)
+    extracted.get(etaSupported in Eta).extensions.foreach(println)
     state
   }
 
