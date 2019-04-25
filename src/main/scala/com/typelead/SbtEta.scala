@@ -75,7 +75,7 @@ object SbtEta extends AutoPlugin {
     inThisBuild(Seq(
       etaSendMetrics := true,
       etlasUseLocal := true,
-      etlasPath := baseDirectory.value / "project" / "target" / "etlas" / "etlas",
+      etlasPath := BuildPaths.outputDirectory(BuildPaths.projectStandard(baseDirectory.value)) / "etlas" / "etlas",
       etlasRepository := Etlas.DEFAULT_ETLAS_REPO,
       etlasVersion := {
         val installPath = if (etlasUseLocal.value) None else Some(etlasPath.value)

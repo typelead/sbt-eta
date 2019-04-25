@@ -8,6 +8,7 @@ import sbt.Keys._
 import sbt._
 import sbt.io.Using
 
+import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 import scala.sys.process.{Process, ProcessLogger}
 import scala.util.{Properties, Try}
@@ -218,12 +219,13 @@ object Etlas {
   }
 
   def etlasVersion(installPath: Option[File], workDir: File, log: Logger): String = {
-    etlas(None, Seq("--numeric-version"), workDir, log, saveOutput = true).head
+    etlas(installPath, Seq("--numeric-version"), workDir, log, saveOutput = true).head
   }
 
   private[typelead] val DEFAULT_ETLAS_REPO = "http://cdnverify.eta-lang.org/eta-binaries"
 
-  def download(repo: String, dest: File, version: String, log: Logger): Unit = {
+  @tailrec
+  def download(repo: String, dest: File, version: String, log: Logger, errorOnWrongVersion: Boolean = false): Unit = {
     val (arch, ext) = if (Properties.isWin)
       ("x86_64-windows", ".exe")
     else if (Properties.isMac)
@@ -242,9 +244,16 @@ object Etlas {
       }
     }
     if (dest.setExecutable(true)) {
-      val version = etlas(Some(dest), Seq("--version"), dest.getParentFile, log, saveOutput = true).head
-      if (version.toLowerCase.contains("etlas")) ()
-      else sys.error(s"Executable '${dest.getCanonicalPath}' is not Etlas binary.")
+      val curVersion = etlasVersion(Some(dest), dest.getParentFile, log)
+      if (curVersion == version) ()
+      else if (!errorOnWrongVersion) {
+        log.warn(s"Wrong version installed (actual: $curVersion, expected: $version). Try to download correct version ...")
+        IO.delete(dest)
+        download(repo, dest, version, log, errorOnWrongVersion = true)
+      } else {
+        log.error(s"Wrong version installed (actual: $curVersion, expected: $version).")
+        sys.error(s"Executable '${dest.getCanonicalPath}' is not Etlas binary.")
+      }
     } else {
       sys.error("Could not set permissions for Eltas binary.")
     }
