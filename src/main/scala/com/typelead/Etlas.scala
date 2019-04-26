@@ -111,16 +111,6 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
     }
   }
 
-  def getSupported(log: Logger): Etlas.Supported = {
-    etlas(installPath, args("exec", "eta", "--", "--supported-extensions"), workDir, log, saveOutput = true)
-      .foldLeft(Etlas.Supported(Nil, Nil)) {
-        case (Etlas.Supported(languages, extensions), str) if str.startsWith("Haskell") =>
-          Etlas.Supported(languages :+ str, extensions)
-        case (Etlas.Supported(languages, extensions), str) =>
-          Etlas.Supported(languages, extensions :+ str)
-      }
-  }
-
   // Resolve dependencies
 
   def getMavenDependencies(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Seq[ModuleID] = {
@@ -230,6 +220,16 @@ object Etlas {
 
   def etlasVersion(installPath: Option[File], workDir: File, log: Logger): String = {
     etlas(installPath, Seq("--numeric-version"), workDir, log, saveOutput = true).head
+  }
+
+  def etaSupported(installPath: Option[File], workDir: File, etaVersion: EtaVersion, log: Logger): Supported = {
+    etlas(installPath, Seq("exec", "eta", "--", "--supported-extensions").withEtaVersion(etaVersion), workDir, log, saveOutput = true)
+      .foldLeft(Etlas.Supported(Nil, Nil)) {
+        case (Etlas.Supported(languages, extensions), str) if str.startsWith("Haskell") =>
+          Etlas.Supported(languages :+ str, extensions)
+        case (Etlas.Supported(languages, extensions), str) =>
+          Etlas.Supported(languages, extensions :+ str)
+      }
   }
 
   private[typelead] val DEFAULT_ETLAS_REPO = "http://cdnverify.eta-lang.org/eta-binaries"

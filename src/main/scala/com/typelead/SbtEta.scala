@@ -79,12 +79,13 @@ object SbtEta extends AutoPlugin {
       etlasPath := BuildPaths.outputDirectory(BuildPaths.projectStandard(baseDirectory.value)) / "etlas" / "etlas",
       etlasRepository := Etlas.DEFAULT_ETLAS_REPO,
       etlasVersion := {
-        val installPath = if (etlasUseLocal.value) None else Some(etlasPath.value)
-        Etlas.etlasVersion(installPath, baseDirectory.value, Logger(sLog.value))
+        Etlas.etlasVersion(getEtlasInstallPath.value, baseDirectory.value, Logger(sLog.value))
       },
       etaVersion := {
-        val installPath = if (etlasUseLocal.value) None else Some(etlasPath.value)
-        Etlas.etaVersion(installPath, baseDirectory.value, Logger(sLog.value)).friendlyVersion
+        Etlas.etaVersion(getEtlasInstallPath.value, baseDirectory.value, Logger(sLog.value)).friendlyVersion
+      },
+      etaSupported := {
+        Etlas.etaSupported(getEtlasInstallPath.value, baseDirectory.value, getEtaVersion.value, Logger(sLog.value))
       }
     ))
   }
@@ -98,9 +99,6 @@ object SbtEta extends AutoPlugin {
       etaCabal := refreshCabalTask.value,
       etaPackage := {
         etlas.value.getEtaPackage(etaCabal.value, Logger(streams.value))
-      },
-      etaSupported := {
-        etlas.value.getSupported(Logger(sLog.value))
       },
       // Standard tasks
       clean := {
@@ -238,6 +236,10 @@ object SbtEta extends AutoPlugin {
     EtaVersion((etaVersion in ThisBuild).value)
   }
 
+  private def getEtlasInstallPath: Def.Initialize[Option[File]] = Def.setting {
+    if (etlasUseLocal.value) None else Some(etlasPath.value)
+  }
+
   private def getEtlasSetting: Def.Initialize[Etlas] = Def.setting {
     // Global settings
     val useLocal = (etlasUseLocal in ThisBuild).value
@@ -251,12 +253,16 @@ object SbtEta extends AutoPlugin {
     val dist = target.value
     val log = Logger(sLog.value)
     // Configure Etlas
-    if (useLocal) {
-      Etlas(None, workDir, dist, etaVer, sendMetricsFlag)
-    } else {
-      Etlas.download(etlasRepo, installPath, etlasVer, log)
-      Etlas(Some(installPath), workDir, dist, etaVer, sendMetricsFlag)
-    }
+    Etlas(
+      if (useLocal) None else {
+        Etlas.download(etlasRepo, installPath, etlasVer, log)
+        Some(installPath)
+      },
+      workDir,
+      dist,
+      etaVer,
+      sendMetricsFlag
+    )
   }
 
   private def getFilePaths(workDir: File, files: Seq[File]): Seq[String] = {
@@ -288,7 +294,7 @@ object SbtEta extends AutoPlugin {
 
   private def createCabalTask: Def.Initialize[Task[Cabal]] = Def.task {
     val etaVer = getEtaVersion.value
-    val supported = (etaSupported in Eta).value
+    val supported = (etaSupported in ThisBuild).value
     val workDir = (baseDirectory in Eta).value
     val projectName = name.value + "-eta"
     val projectVersion = EtaDependency.getPackageVersion(version.value)
@@ -438,13 +444,13 @@ object SbtEta extends AutoPlugin {
 
   private def etaLanguages: Command = Command.command("eta-languages") { state =>
     val extracted = Project.extract(state)
-    extracted.get(etaSupported in Eta).languages.foreach(println)
+    extracted.get(etaSupported in ThisBuild).languages.foreach(println)
     state
   }
 
   private def etaExtensions: Command = Command.command("eta-extensions") { state =>
     val extracted = Project.extract(state)
-    extracted.get(etaSupported in Eta).extensions.foreach(println)
+    extracted.get(etaSupported in ThisBuild).extensions.foreach(println)
     state
   }
 
