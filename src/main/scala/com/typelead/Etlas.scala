@@ -3,11 +3,12 @@ package com.typelead
 import java.lang.ProcessBuilder.Redirect
 import java.lang.{ProcessBuilder => JProcessBuilder}
 
-import EtaDependency.EtaVersion
+import EtaDependency.{EtaPackage, EtaVersion}
 import sbt.Keys._
 import sbt._
 import sbt.io.Using
 
+import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
 import scala.sys.process.{Process, ProcessLogger}
 import scala.util.{Properties, Try}
@@ -24,7 +25,6 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
 
   def build(cabal: Cabal, log: Logger): Unit = {
     etlas(installPath, args("build"), workDir, log, filterLog = _ => true)
-    ()
   }
 
   def buildArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
@@ -35,7 +35,6 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
 
   def clean(log: Logger): Unit = {
     etlas(installPath, args("clean"), workDir, log)
-    ()
   }
 
   def deps(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
@@ -50,13 +49,13 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
     etlas(installPath, args("install", "--dependencies-only"), workDir, log)
   }
 
-  def freeze(log: Logger): Unit = {
+  def freeze(log: Logger): Option[File] = {
     etlas(installPath, args("freeze"), workDir, log)
+    (workDir * Cabal.CABAL_PROJECT_FREEZE).get().headOption
   }
 
   def run(log: Logger): Unit = {
     etlas(installPath, args("run"), workDir, log)
-    ()
   }
 
   def runArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
@@ -127,14 +126,16 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
       .classpath
   }
 
-  def getEtaPackage(cabal: Cabal, log: Logger): Cabal.EtaPackage = {
+  def getEtaPackage(cabal: Cabal, log: Logger): EtaPackage = {
     log.info("Resolve package dependencies...")
-    Cabal.EtaPackage(cabal.projectName, cabal.getArtifactsJars(dist, etaVersion, Cabal.Artifact.library), getPackageDd(dist, etaVersion))
+    EtaPackage(cabal, cabal.getArtifactsJars(dist, etaVersion, Cabal.Artifact.library), getPackageDd(dist, etaVersion))
   }
 
 }
 
 object Etlas {
+
+  final case class Supported(languages: Seq[String], extensions: Seq[String])
 
   private def getParam(name: String): Option[String] = {
     Option(System.getProperty(name)).map(_.toUpperCase)
@@ -181,7 +182,7 @@ object Etlas {
 
     IO.createDirectory(workDir)
     val binary = getEtlasBinary(installPath)
-    logCmd(s"Running `$binary ${args.mkString(" ")} in '$workDir'`...")(log)
+    logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(log)
     val exitCode = synchronized(Process(binary +: args, workDir) ! logger)
 
     if (exitCode != 0) {
@@ -195,7 +196,7 @@ object Etlas {
   private def fork(installPath: Option[File], args: Seq[String], workDir: File, log: sbt.Logger): Unit = {
 
     val binary = getEtlasBinary(installPath)
-    logCmd(s"Running `$binary ${args.mkString(" ")} in '$workDir'`...")(Logger(log))
+    logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(Logger(log))
     val jpb = new JProcessBuilder((binary +: args).toArray: _ *)
     jpb.directory(workDir)
     jpb.redirectInput(Redirect.INHERIT)
@@ -218,12 +219,23 @@ object Etlas {
   }
 
   def etlasVersion(installPath: Option[File], workDir: File, log: Logger): String = {
-    etlas(None, Seq("--numeric-version"), workDir, log, saveOutput = true).head
+    etlas(installPath, Seq("--numeric-version"), workDir, log, saveOutput = true).head
+  }
+
+  def etaSupported(installPath: Option[File], workDir: File, etaVersion: EtaVersion, log: Logger): Supported = {
+    etlas(installPath, Seq("exec", "eta", "--", "--supported-extensions").withEtaVersion(etaVersion), workDir, log, saveOutput = true)
+      .foldLeft(Etlas.Supported(Nil, Nil)) {
+        case (Etlas.Supported(languages, extensions), str) if str.startsWith("Haskell") =>
+          Etlas.Supported(languages :+ str, extensions)
+        case (Etlas.Supported(languages, extensions), str) =>
+          Etlas.Supported(languages, extensions :+ str)
+      }
   }
 
   private[typelead] val DEFAULT_ETLAS_REPO = "http://cdnverify.eta-lang.org/eta-binaries"
 
-  def download(repo: String, dest: File, version: String, log: Logger): Unit = {
+  @tailrec
+  def download(repo: String, dest: File, version: String, log: Logger, errorOnWrongVersion: Boolean = false): Unit = {
     val (arch, ext) = if (Properties.isWin)
       ("x86_64-windows", ".exe")
     else if (Properties.isMac)
@@ -242,9 +254,16 @@ object Etlas {
       }
     }
     if (dest.setExecutable(true)) {
-      val version = etlas(Some(dest), Seq("--version"), dest.getParentFile, log, saveOutput = true).head
-      if (version.toLowerCase.contains("etlas")) ()
-      else sys.error(s"Executable '${dest.getCanonicalPath}' is not Etlas binary.")
+      val curVersion = etlasVersion(Some(dest), dest.getParentFile, log)
+      if (curVersion == version) ()
+      else if (!errorOnWrongVersion) {
+        log.warn(s"Wrong version installed (actual: $curVersion, expected: $version). Try to download correct version ...")
+        IO.delete(dest)
+        download(repo, dest, version, log, errorOnWrongVersion = true)
+      } else {
+        log.error(s"Wrong version installed (actual: $curVersion, expected: $version).")
+        sys.error(s"Executable '${dest.getCanonicalPath}' is not Etlas binary.")
+      }
     } else {
       sys.error("Could not set permissions for Eltas binary.")
     }
