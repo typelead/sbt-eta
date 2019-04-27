@@ -1,12 +1,8 @@
 package com.typelead
 
-import java.lang.ProcessBuilder.Redirect
-import java.lang.{ProcessBuilder => JProcessBuilder}
-
 import EtaDependency.{EtaPackage, EtaVersion}
 import sbt.Keys._
 import sbt._
-import sbt.io.Using
 
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
@@ -51,7 +47,7 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
 
   def freeze(log: Logger): Option[File] = {
     etlas(installPath, args("freeze"), workDir, log)
-    (workDir * Cabal.CABAL_PROJECT_FREEZE).get().headOption
+    (workDir * Cabal.CABAL_PROJECT_FREEZE).get.headOption
   }
 
   def run(log: Logger): Unit = {
@@ -104,7 +100,7 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
       log.info("Starting Eta interpreter...")
       fork(installPath, args("repl"), workDir, log)
     }
-    Run.executeTrapExit(console0(), log).recover {
+    SbtUtils.executeTrapExit(console0(), log).recover {
       case _: InterruptedException =>
         log.info("Eta REPL was interrupted.")
         ()
@@ -199,10 +195,7 @@ object Etlas {
 
     val binary = getEtlasBinary(installPath)
     logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(Logger(log))
-    val jpb = new JProcessBuilder((binary +: args).toArray: _ *)
-    jpb.directory(workDir)
-    jpb.redirectInput(Redirect.INHERIT)
-    val exitCode = Process(jpb).run(SbtUtils.terminalIO).exitValue()
+    val exitCode = SbtUtils.execInherited(binary +: args, workDir)
 
     if (exitCode != 0) {
       sys.error("\n\n[etlas] Exit Failure " ++ exitCode.toString)
@@ -254,9 +247,7 @@ object Etlas {
       val url = new URL(repo + "/etlas-" + version + "/binaries/" + arch + "/" + binary)
       log.info(s"Downloading Etlas binary from '$url' to '${dest.getCanonicalPath}' ...")
       IO.createDirectory(dest.getParentFile)
-      Using.urlInputStream(url) { input =>
-        IO.transfer(input, dest)
-      }
+      SbtUtils.download(url, dest)
     }
     if (dest.setExecutable(true)) {
       val curVersion = etlasVersion(Some(dest), dest.getParentFile, sendMetrics, log)

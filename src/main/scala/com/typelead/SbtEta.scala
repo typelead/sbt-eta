@@ -79,7 +79,7 @@ object SbtEta extends AutoPlugin {
       etlasPath := BuildPaths.outputDirectory(BuildPaths.projectStandard(baseDirectory.value)) / "etlas" / "etlas",
       etlasRepository := Etlas.DEFAULT_ETLAS_REPO,
       etlasVersion := {
-        Etlas.etlasVersion(getEtlasInstallPath.value, baseDirectory.value, etaSendMetrics.value, Logger(sLog.value))
+        Etlas.etlasVersion(None, baseDirectory.value, etaSendMetrics.value, Logger(sLog.value))
       },
       etaVersion := {
         Etlas.etaVersion(getEtlasInstallPath.value, baseDirectory.value, etaSendMetrics.value, Logger(sLog.value)).friendlyVersion
@@ -111,7 +111,7 @@ object SbtEta extends AutoPlugin {
         etlas.value.testArtifacts(etaCabal.value, Logger(streams.value), Artifact.all)
       },
       mainClass := {
-        (etaCompile in Compile).value
+        val _ = (etaCompile in Compile).value
         etaCabal.value.getMainClass
       },
       projectDependencies := {
@@ -139,9 +139,9 @@ object SbtEta extends AutoPlugin {
     inConfig(config)(Seq(
       sourceDirectory := (sourceDirectory in base).value / "eta",
       sourceDirectories := Seq(sourceDirectory.value),
-      exportedProductJars := {
+      exportedProducts := {
         val log = Logger(streams.value)
-        (etaCompile in base).value
+        val _ = (etaCompile in base).value
         (etaCabal in Eta).value.getArtifactsJars((target in Eta).value, getEtaVersion.value, filter).flatMap { jar =>
           log.info("Eta artifact JAR: " + jar.getCanonicalPath)
           PathFinder(jar).classpath
@@ -194,16 +194,16 @@ object SbtEta extends AutoPlugin {
     libraryDependencies ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaTest).value).map(_ % Test),
 
     unmanagedJars in Compile ++= (managedClasspath in EtaLib).value,
-    unmanagedJars in Compile ++= (exportedProductJars in EtaLib).value,
-    exportedProductJars in Compile ++= (exportedProductJars in EtaLib).value,
+    unmanagedJars in Compile ++= (exportedProducts in EtaLib).value,
+    exportedProducts in Compile ++= (exportedProducts in EtaLib).value,
 
     unmanagedJars in Runtime ++= (managedClasspath in EtaExe).value,
-    unmanagedJars in Runtime ++= (exportedProductJars in EtaExe).value,
-    exportedProductJars in Runtime ++= (exportedProductJars in EtaExe).value,
+    unmanagedJars in Runtime ++= (exportedProducts in EtaExe).value,
+    exportedProducts in Runtime ++= (exportedProducts in EtaExe).value,
 
     unmanagedJars in Test ++= (managedClasspath in EtaTest).value,
-    unmanagedJars in Test ++= (exportedProductJars in EtaTest).value,
-    exportedProductJars in Test ++= (exportedProductJars in EtaTest).value,
+    unmanagedJars in Test ++= (exportedProducts in EtaTest).value,
+    exportedProducts in Test ++= (exportedProducts in EtaTest).value,
 
     compile in Compile := {
       (etaCompile in Compile).value
@@ -225,9 +225,9 @@ object SbtEta extends AutoPlugin {
       (mainClass in Eta).value orElse (mainClass in (Compile, packageBin)).value
     },
 
-    watchSources ++= (sourceDirectory in EtaLib ).value ** "*" get(),
-    watchSources ++= (sourceDirectory in EtaExe ).value ** "*" get(),
-    watchSources ++= (sourceDirectory in EtaTest).value ** "*" get(),
+    watchSources ++= ((sourceDirectory in EtaLib ).value ** "*").get,
+    watchSources ++= ((sourceDirectory in EtaExe ).value ** "*").get,
+    watchSources ++= ((sourceDirectory in EtaTest).value ** "*").get,
 
     commands ++= Seq(etaReplCommand, etaLanguages, etaExtensions)
   )
@@ -237,13 +237,14 @@ object SbtEta extends AutoPlugin {
   }
 
   private def getEtlasInstallPath: Def.Initialize[Option[File]] = Def.setting {
-    val useLocal = (etlasUseLocal in ThisBuild).value
-    val etlasVer = (etlasVersion in ThisBuild).value
-    val etlasRepo = (etlasRepository in ThisBuild).value
-    val installPath = (etlasPath in ThisBuild).value
-    val sendMetricsFlag = (etaSendMetrics in ThisBuild).value
-    val log = Logger(sLog.value)
-    if (useLocal) None else {
+    if ((etlasUseLocal in ThisBuild).value) {
+      None
+    } else {
+      val etlasVer = (etlasVersion in ThisBuild).value
+      val etlasRepo = (etlasRepository in ThisBuild).value
+      val installPath = (etlasPath in ThisBuild).value
+      val sendMetricsFlag = (etaSendMetrics in ThisBuild).value
+      val log = Logger(sLog.value)
       synchronized {
         Etlas.download(etlasRepo, installPath, etlasVer, sendMetricsFlag, log)
       }
@@ -278,7 +279,7 @@ object SbtEta extends AutoPlugin {
 
   private def getProductsClasspath: Def.Initialize[Task[Classpath]] = {
     val selectDeps  = ScopeFilter(inDependencies(ThisProject, includeRoot = false))
-    val productJars = ((exportedProductJarsIfMissing in Compile) ?? Nil).all(selectDeps)
+    val productJars = ((exportedProductsIfMissing in Compile) ?? Nil).all(selectDeps)
     Def.task { productJars.value.flatten }
   }
 
@@ -372,7 +373,7 @@ object SbtEta extends AutoPlugin {
     val tmpCabal = cabal.getTmpCabal(etaPackages)
     val tmpPath = workDir / "tmp"
     IO.createDirectory(tmpPath)
-    IO.delete(tmpPath ** "*" get())
+    IO.delete((tmpPath ** "*").get)
     Cabal.writeCabal(tmpPath, tmpCabal, Nil, log)
     Cabal.writeCabalProject(tmpPath, tmpCabal, Nil, log)
     ResolvedCabal(
@@ -399,7 +400,7 @@ object SbtEta extends AutoPlugin {
         val productsClasspath = getProductsClasspath.value
         val fullClasspath = (productsClasspath ++ resolved.classpath).map(_.data) :+ classesFolder
 
-        IO.delete(workDir * "cabal.*" get())
+        IO.delete((workDir * "cabal.*").get)
         Cabal.writeCabal(workDir, cabal, etaPackages, log)
         Cabal.writeCabalProject(workDir, cabal, etaPackages, log)
         Cabal.writeCabalProjectLocal(workDir, cabal, etaPackages, fullClasspath, log)
