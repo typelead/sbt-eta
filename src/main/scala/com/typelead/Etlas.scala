@@ -182,8 +182,10 @@ object Etlas {
 
     IO.createDirectory(workDir)
     val binary = getEtlasBinary(installPath)
-    logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(log)
-    val exitCode = synchronized(Process(binary +: args, workDir) ! logger)
+    val exitCode = synchronized {
+      logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(log)
+      Process(binary +: args, workDir) ! logger
+    }
 
     if (exitCode != 0) {
       sys.error("\n\n[etlas] Exit Failure " ++ exitCode.toString)
@@ -214,16 +216,19 @@ object Etlas {
     def addSendMetrics(flag: Boolean): Seq[String] = (if (flag) "--enable-send-metrics" else "--disable-send-metrics") +: args
   }
 
-  def etaVersion(installPath: Option[File], workDir: File, log: Logger): EtaVersion = {
-    EtaVersion(etlas(installPath, Seq("exec", "eta", "--", "--numeric-version"), workDir, log, saveOutput = true).head)
+  def etaVersion(installPath: Option[File], workDir: File, sendMetrics: Boolean, log: Logger): EtaVersion = {
+    val args = Seq("exec", "eta", "--", "--numeric-version").addSendMetrics(sendMetrics)
+    EtaVersion(etlas(installPath, args, workDir, log, saveOutput = true).head)
   }
 
-  def etlasVersion(installPath: Option[File], workDir: File, log: Logger): String = {
-    etlas(installPath, Seq("--numeric-version"), workDir, log, saveOutput = true).head
+  def etlasVersion(installPath: Option[File], workDir: File, sendMetrics: Boolean, log: Logger): String = {
+    val args = Seq("--numeric-version").addSendMetrics(sendMetrics)
+    etlas(installPath, args, workDir, log, saveOutput = true).head
   }
 
-  def etaSupported(installPath: Option[File], workDir: File, etaVersion: EtaVersion, log: Logger): Supported = {
-    etlas(installPath, Seq("exec", "eta", "--", "--supported-extensions").withEtaVersion(etaVersion), workDir, log, saveOutput = true)
+  def etaSupported(installPath: Option[File], workDir: File, etaVersion: EtaVersion, sendMetrics: Boolean, log: Logger): Supported = {
+    val args = Seq("exec", "eta", "--", "--supported-extensions").withEtaVersion(etaVersion).addSendMetrics(sendMetrics)
+    etlas(installPath, args, workDir, log, saveOutput = true)
       .foldLeft(Etlas.Supported(Nil, Nil)) {
         case (Etlas.Supported(languages, extensions), str) if str.startsWith("Haskell") =>
           Etlas.Supported(languages :+ str, extensions)
@@ -235,7 +240,7 @@ object Etlas {
   private[typelead] val DEFAULT_ETLAS_REPO = "http://cdnverify.eta-lang.org/eta-binaries"
 
   @tailrec
-  def download(repo: String, dest: File, version: String, log: Logger, errorOnWrongVersion: Boolean = false): Unit = {
+  def download(repo: String, dest: File, version: String, sendMetrics: Boolean, log: Logger, errorOnWrongVersion: Boolean = false): Unit = {
     val (arch, ext) = if (Properties.isWin)
       ("x86_64-windows", ".exe")
     else if (Properties.isMac)
@@ -254,12 +259,12 @@ object Etlas {
       }
     }
     if (dest.setExecutable(true)) {
-      val curVersion = etlasVersion(Some(dest), dest.getParentFile, log)
+      val curVersion = etlasVersion(Some(dest), dest.getParentFile, sendMetrics, log)
       if (curVersion == version) ()
       else if (!errorOnWrongVersion) {
         log.warn(s"Wrong version installed (actual: $curVersion, expected: $version). Try to download correct version ...")
         IO.delete(dest)
-        download(repo, dest, version, log, errorOnWrongVersion = true)
+        download(repo, dest, version, sendMetrics, log, errorOnWrongVersion = true)
       } else {
         log.error(s"Wrong version installed (actual: $curVersion, expected: $version).")
         sys.error(s"Executable '${dest.getCanonicalPath}' is not Etlas binary.")

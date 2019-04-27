@@ -79,13 +79,13 @@ object SbtEta extends AutoPlugin {
       etlasPath := BuildPaths.outputDirectory(BuildPaths.projectStandard(baseDirectory.value)) / "etlas" / "etlas",
       etlasRepository := Etlas.DEFAULT_ETLAS_REPO,
       etlasVersion := {
-        Etlas.etlasVersion(getEtlasInstallPath.value, baseDirectory.value, Logger(sLog.value))
+        Etlas.etlasVersion(getEtlasInstallPath.value, baseDirectory.value, etaSendMetrics.value, Logger(sLog.value))
       },
       etaVersion := {
-        Etlas.etaVersion(getEtlasInstallPath.value, baseDirectory.value, Logger(sLog.value)).friendlyVersion
+        Etlas.etaVersion(getEtlasInstallPath.value, baseDirectory.value, etaSendMetrics.value, Logger(sLog.value)).friendlyVersion
       },
       etaSupported := {
-        Etlas.etaSupported(getEtlasInstallPath.value, baseDirectory.value, getEtaVersion.value, Logger(sLog.value))
+        Etlas.etaSupported(getEtlasInstallPath.value, baseDirectory.value, getEtaVersion.value, etaSendMetrics.value, Logger(sLog.value))
       }
     ))
   }
@@ -95,7 +95,7 @@ object SbtEta extends AutoPlugin {
       baseDirectory := (target in Compile).value / "eta",
       target := (target in Compile).value / "eta" / "dist",
       // Plugin specific tasks
-      etlas := getEtlasSetting.value,
+      etlas := getEtlas.value,
       etaCabal := refreshCabalTask.value,
       etaPackage := {
         etlas.value.getEtaPackage(etaCabal.value, Logger(streams.value))
@@ -237,31 +237,27 @@ object SbtEta extends AutoPlugin {
   }
 
   private def getEtlasInstallPath: Def.Initialize[Option[File]] = Def.setting {
-    if (etlasUseLocal.value) None else Some(etlasPath.value)
-  }
-
-  private def getEtlasSetting: Def.Initialize[Etlas] = Def.setting {
-    // Global settings
     val useLocal = (etlasUseLocal in ThisBuild).value
     val etlasVer = (etlasVersion in ThisBuild).value
     val etlasRepo = (etlasRepository in ThisBuild).value
-    val etaVer = getEtaVersion.value
     val installPath = (etlasPath in ThisBuild).value
     val sendMetricsFlag = (etaSendMetrics in ThisBuild).value
-    // Project settings
-    val workDir = baseDirectory.value
-    val dist = target.value
     val log = Logger(sLog.value)
-    // Configure Etlas
+    if (useLocal) None else {
+      synchronized {
+        Etlas.download(etlasRepo, installPath, etlasVer, sendMetricsFlag, log)
+      }
+      Some(installPath)
+    }
+  }
+
+  private def getEtlas: Def.Initialize[Etlas] = Def.setting {
     Etlas(
-      if (useLocal) None else {
-        Etlas.download(etlasRepo, installPath, etlasVer, log)
-        Some(installPath)
-      },
-      workDir,
-      dist,
-      etaVer,
-      sendMetricsFlag
+      getEtlasInstallPath.value,
+      baseDirectory.value,
+      target.value,
+      getEtaVersion.value,
+      (etaSendMetrics in ThisBuild).value
     )
   }
 
