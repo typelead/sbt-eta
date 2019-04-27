@@ -16,6 +16,7 @@ lazy val root = (project in file(".")).
       eta("text"),
       "com.google.guava" % "guava" % "25.0-jre"
     ),
+    resolvers in EtaLib ++= Seq(Resolver.jcenterRepo, Resolver.sonatypeRepo("public")),
     gitDependencies in EtaLib ++= Seq(
       git("eta-spark-core", "https://github.com/Jyothsnasrinivas/eta-spark-core", branch("master"))
     ),

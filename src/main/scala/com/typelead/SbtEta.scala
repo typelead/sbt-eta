@@ -128,6 +128,7 @@ object SbtEta extends AutoPlugin {
       installIncludes := Nil,
       testSuiteType := exitcodeTestSuite,
       libraryDependencies := Seq(EtaDependency.base),
+      resolvers := Seq(Resolver.mavenCentral),
       gitDependencies := Nil
     )) ++
       makeSettings(EtaLib, Compile, Artifact.library) ++
@@ -161,6 +162,7 @@ object SbtEta extends AutoPlugin {
       installIncludes := (installIncludes in Eta).value,
       testSuiteType := (testSuiteType in Eta).value,
       libraryDependencies := (libraryDependencies in Eta).value,
+      resolvers := (resolvers in Eta).value,
       gitDependencies := (gitDependencies in Eta).value
     ))
   }
@@ -192,6 +194,7 @@ object SbtEta extends AutoPlugin {
     libraryDependencies ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaLib).value),
     libraryDependencies ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaExe).value),
     libraryDependencies ++= EtaDependency.getAllMavenDependencies((libraryDependencies in EtaTest).value).map(_ % Test),
+    resolvers ++= (resolvers in EtaLib).value ++ (resolvers in EtaExe).value ++ (resolvers in EtaTest).value,
 
     unmanagedJars in Compile ++= (managedClasspath in EtaLib).value,
     unmanagedJars in Compile ++= (exportedProducts in EtaLib).value,
@@ -277,6 +280,14 @@ object SbtEta extends AutoPlugin {
       .map(_.toString())
   }
 
+  private def getMavenRepositories(resolvers: Seq[Resolver]): Seq[String] = {
+    resolvers.collect {
+      case DefaultMavenRepository => "central"
+      case JCenterRepository      => "jcenter"
+      case m: MavenRepository     => m.root
+    }
+  }
+
   private def getProductsClasspath: Def.Initialize[Task[Classpath]] = {
     val selectDeps  = ScopeFilter(inDependencies(ThisProject, includeRoot = false))
     val productJars = ((exportedProductsIfMissing in Compile) ?? Nil).all(selectDeps)
@@ -302,6 +313,7 @@ object SbtEta extends AutoPlugin {
       exposedModules = (exposedModules in EtaLib).value,
       buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaLib).value),
       mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaLib).value),
+      mavenRepositories = getMavenRepositories((resolvers in EtaLib).value),
       gitDependencies = (gitDependencies in EtaLib).value,
       cppOptions = (cppOptions in EtaLib).value,
       ghcOptions = (ghcOptions in EtaLib).value,
@@ -317,6 +329,7 @@ object SbtEta extends AutoPlugin {
         sourceDirectories = getFilePaths(workDir, (sourceDirectories in EtaExe).value),
         buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaExe).value),
         mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaExe).value),
+        mavenRepositories = getMavenRepositories((resolvers in EtaExe).value),
         gitDependencies = (gitDependencies in EtaExe).value,
         hsMain = Some(main),
         cppOptions = (cppOptions in EtaExe).value,
@@ -334,6 +347,7 @@ object SbtEta extends AutoPlugin {
         sourceDirectories = getFilePaths(workDir, (sourceDirectories in EtaTest).value),
         buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaTest).value),
         mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaTest).value),
+        mavenRepositories = getMavenRepositories((resolvers in EtaTest).value),
         gitDependencies = (gitDependencies in EtaTest).value,
         hsMain = Some(main),
         cppOptions = (cppOptions in EtaTest).value,

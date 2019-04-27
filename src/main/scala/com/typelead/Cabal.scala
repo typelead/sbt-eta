@@ -38,6 +38,7 @@ final case class Cabal(projectName: String,
 
   def buildDependencies: Seq[String] = artifacts.flatMap(_.buildDependencies).distinct
   def mavenDependencies: Seq[String] = artifacts.flatMap(_.mavenDependencies).distinct
+  def mavenRepositories: Seq[String] = artifacts.flatMap(_.mavenRepositories).distinct
   def gitDependencies: Seq[GitDependency] = distinctBy(artifacts.flatMap(_.gitDependencies))(_.packageName)
 
   def hasLibrary   : Boolean = projectLibrary.nonEmpty
@@ -64,6 +65,7 @@ final case class Cabal(projectName: String,
   def getTmpCabal(etaPackages: Seq[EtaPackage]): Cabal = {
     val allBuildDependencies = (buildDependencies ++ etaPackages.flatMap(_.cabal.buildDependencies)).distinct
     val allMavenDependencies = (mavenDependencies ++ etaPackages.flatMap(_.cabal.mavenDependencies)).distinct
+    val allMavenRepositories = (mavenRepositories ++ etaPackages.flatMap(_.cabal.mavenRepositories)).distinct
     val allGitDependencies   = distinctBy(gitDependencies ++ etaPackages.flatMap(_.cabal.gitDependencies))(_.packageName)
     Cabal(
       projectName = projectName,
@@ -74,6 +76,7 @@ final case class Cabal(projectName: String,
         exposedModules = Nil,
         buildDependencies = allBuildDependencies,
         mavenDependencies = allMavenDependencies,
+        mavenRepositories = allMavenRepositories,
         gitDependencies   = allGitDependencies,
         cppOptions = Nil,
         ghcOptions = Nil,
@@ -118,6 +121,7 @@ object Cabal {
     def exposedModules: Seq[String]
     def buildDependencies: Seq[String]
     def mavenDependencies: Seq[String]
+    def mavenRepositories: Seq[String]
     def gitDependencies: Seq[GitDependency]
     def hsMain: Option[String]
     def cppOptions: Seq[String]
@@ -135,6 +139,7 @@ object Cabal {
                            override val exposedModules: Seq[String],
                            override val buildDependencies: Seq[String],
                            override val mavenDependencies: Seq[String],
+                           override val mavenRepositories: Seq[String],
                            override val gitDependencies: Seq[GitDependency],
                            override val cppOptions: Seq[String],
                            override val ghcOptions: Seq[String],
@@ -154,6 +159,7 @@ object Cabal {
                               override val sourceDirectories: Seq[String],
                               override val buildDependencies: Seq[String],
                               override val mavenDependencies: Seq[String],
+                              override val mavenRepositories: Seq[String],
                               override val gitDependencies: Seq[GitDependency],
                               override val hsMain: Option[String],
                               override val cppOptions: Seq[String],
@@ -174,6 +180,7 @@ object Cabal {
                              override val sourceDirectories: Seq[String],
                              override val buildDependencies: Seq[String],
                              override val mavenDependencies: Seq[String],
+                             override val mavenRepositories: Seq[String],
                              override val gitDependencies: Seq[GitDependency],
                              override val hsMain: Option[String],
                              override val cppOptions: Seq[String],
@@ -195,9 +202,9 @@ object Cabal {
 
     type Filter = Artifact[_] => Boolean
 
-    def lib(name: String) : Library    = Library   (name, Nil, Nil, Nil, Nil, Nil,       Nil, Nil, Nil, Nil, Nil, "Haskell2010")
-    def exe(name: String) : Executable = Executable(name, Nil,      Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
-    def test(name: String): TestSuite  = TestSuite (name, Nil,      Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010", TestSuiteTypes.exitcode)
+    def lib(name: String) : Library    = Library   (name, Nil, Nil, Nil, Nil, Nil, Nil,       Nil, Nil, Nil, Nil, Nil, "Haskell2010")
+    def exe(name: String) : Executable = Executable(name, Nil,      Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
+    def test(name: String): TestSuite  = TestSuite (name, Nil,      Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010", TestSuiteTypes.exitcode)
 
     val all: Filter = _ => true
     val library: Filter = {
@@ -291,6 +298,8 @@ object Cabal {
         "  build-depends:      ", "                    , ") ++
       writeLines(artifact.mavenDependencies,
         "  maven-depends:      ", "                    , ") ++
+      writeLines(artifact.mavenRepositories.filter(_ => artifact.mavenDependencies.nonEmpty),
+        "  maven-repos:        ", "                    , ") ++
       writeLines(Some(artifact.cppOptions).filter(_.nonEmpty).map(_.mkString(" ")),
         "  cpp-options:        ", "                    , ") ++
       writeLines(Some(artifact.ghcOptions).filter(_.nonEmpty).map(_.mkString(" ")),
