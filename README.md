@@ -38,17 +38,11 @@ An example of multi-project build included Eta projects is provided in the [exam
 
 1. Create a standard Scala/SBT project using your favorite method.
 
-2. Initialize new Eta project one of the following ways:
+2. Describe Eta project in `build.sbt` using plugin's DSL. 
 
-   1. Describe Eta project using plugins DSL (preferred method) 
- 
-   2. Automatically with sbt command:
- 
-      * Run `eta-init` command in `sbt`, e.g. `sbt eta-init`.
-      
-4. Write Scala/Eta code to perform your task.
+3. Write Scala/Eta code to perform your task.
 
-5. Start up `sbt` and run the `compile` and/or `run` task.
+4. Start up `sbt` and run the `compile` and/or `run` task.
 
 ## Configuration
 

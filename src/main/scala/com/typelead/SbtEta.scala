@@ -229,7 +229,7 @@ object SbtEta extends AutoPlugin {
     watchSources ++= (sourceDirectory in EtaExe ).value ** "*" get(),
     watchSources ++= (sourceDirectory in EtaTest).value ** "*" get(),
 
-    commands ++= Seq(etaInitCommand, etaReplCommand, etaLanguages, etaExtensions)
+    commands ++= Seq(etaReplCommand, etaLanguages, etaExtensions)
   )
 
   private def getEtaVersion: Def.Initialize[EtaVersion] = Def.setting {
@@ -406,28 +406,6 @@ object SbtEta extends AutoPlugin {
         resolved.freezeFile.foreach(IO.copyFile(_, workDir / CABAL_PROJECT_FREEZE))
 
         cabal
-    }
-  }
-
-  private def etaInitCommand: Command = Command.command("eta-init") { state =>
-    val extracted = Project.extract(state)
-    val workDir = extracted.get(baseDirectory in Eta)
-    val log = Logger(extracted.get(sLog))
-    Cabal.getCabalFile(workDir) match {
-      case Some(file) =>
-        log.warn(s"Found '$file' in '${workDir.getCanonicalPath}'. Could not initialize new Eta project.")
-        state
-      case None =>
-        extracted.get(etlas in Eta).init(
-          extracted.get(normalizedName),
-          extracted.get(description),
-          EtaDependency.getPackageVersion(extracted.get(version)),
-          extracted.get(developers),
-          extracted.get(homepage),
-          extracted.get(sourceDirectory in EtaLib),
-          log
-        )
-        extracted.appendWithSession(baseProjectSettings, state)
     }
   }
 
