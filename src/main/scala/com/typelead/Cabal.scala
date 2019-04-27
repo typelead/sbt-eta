@@ -73,7 +73,7 @@ final case class Cabal(projectName: String,
       projectLibrary = Some(Library(
         name = projectName,
         sourceDirectories = Nil,
-        exposedModules = Nil,
+        modules = Nil,
         buildDependencies = allBuildDependencies,
         mavenDependencies = allMavenDependencies,
         mavenRepositories = allMavenRepositories,
@@ -109,6 +109,12 @@ object Cabal {
     testSuites = Nil
   )
 
+  sealed trait Module {
+    def name: String
+  }
+  final case class ExposedModule(override val name: String) extends Module
+  final case class OtherModule(override val name: String) extends Module
+
   object TestSuiteTypes extends Enumeration {
     val exitcode: Value = Value("exitcode-stdio-1.0")
     val detailed: Value = Value("detailed-0.9")
@@ -118,7 +124,7 @@ object Cabal {
     def name: String
     def depsPackage: String
     def sourceDirectories: Seq[String]
-    def exposedModules: Seq[String]
+    def modules: Seq[Module]
     def buildDependencies: Seq[String]
     def mavenDependencies: Seq[String]
     def mavenRepositories: Seq[String]
@@ -131,12 +137,14 @@ object Cabal {
     def extensions: Seq[String]
     def language: String
 
+    def exposedModules: Seq[Module]
+    def otherModules: Seq[Module]
     def addLibrary(artifact: Option[Library]): A
   }
 
   final case class Library(override val name: String,
                            override val sourceDirectories: Seq[String],
-                           override val exposedModules: Seq[String],
+                           override val modules: Seq[Module],
                            override val buildDependencies: Seq[String],
                            override val mavenDependencies: Seq[String],
                            override val mavenRepositories: Seq[String],
@@ -150,6 +158,12 @@ object Cabal {
 
     override val depsPackage: String = "lib:" + name
     override val hsMain: Option[String] = None
+    val exposedModules: Seq[Module] = modules.collect {
+      case exposed: ExposedModule => exposed
+    }
+    val otherModules: Seq[Module] = modules.collect {
+      case other: OtherModule => other
+    }
 
     override def addLibrary(artifact: Option[Library]): Library = this
 
@@ -157,6 +171,7 @@ object Cabal {
 
   final case class Executable(override val name: String,
                               override val sourceDirectories: Seq[String],
+                              override val modules: Seq[Module],
                               override val buildDependencies: Seq[String],
                               override val mavenDependencies: Seq[String],
                               override val mavenRepositories: Seq[String],
@@ -170,7 +185,8 @@ object Cabal {
                               override val language: String) extends Artifact[Executable] {
 
     override val depsPackage: String = "exe:" + name
-    override val exposedModules: Seq[String] = Nil
+    override val exposedModules: Seq[Module] = Nil
+    override val otherModules: Seq[Module] = modules
 
     override def addLibrary(artifact: Option[Library]): Executable = this.copy(buildDependencies = buildDependencies ++ artifact.map(_.name).toList)
 
@@ -178,6 +194,7 @@ object Cabal {
 
   final case class TestSuite(override val name: String,
                              override val sourceDirectories: Seq[String],
+                             override val modules: Seq[Module],
                              override val buildDependencies: Seq[String],
                              override val mavenDependencies: Seq[String],
                              override val mavenRepositories: Seq[String],
@@ -192,7 +209,8 @@ object Cabal {
                              testSuiteType: TestSuiteTypes.Value) extends Artifact[TestSuite] {
 
     override val depsPackage: String = "test:" + name
-    override val exposedModules: Seq[String] = Nil
+    override val exposedModules: Seq[Module] = Nil
+    override val otherModules: Seq[Module] = modules
 
     override def addLibrary(artifact: Option[Library]): TestSuite = this.copy(buildDependencies = buildDependencies ++ artifact.map(_.name).toList)
 
@@ -203,8 +221,8 @@ object Cabal {
     type Filter = Artifact[_] => Boolean
 
     def lib(name: String) : Library    = Library   (name, Nil, Nil, Nil, Nil, Nil, Nil,       Nil, Nil, Nil, Nil, Nil, "Haskell2010")
-    def exe(name: String) : Executable = Executable(name, Nil,      Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
-    def test(name: String): TestSuite  = TestSuite (name, Nil,      Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010", TestSuiteTypes.exitcode)
+    def exe(name: String) : Executable = Executable(name, Nil, Nil, Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
+    def test(name: String): TestSuite  = TestSuite (name, Nil, Nil, Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010", TestSuiteTypes.exitcode)
 
     val all: Filter = _ => true
     val library: Filter = {
@@ -292,8 +310,10 @@ object Cabal {
       artifact.hsMain.map(m => getMainTag(artifact) + m).toList ++
       writeLines(artifact.sourceDirectories,
         "  hs-source-dirs:     ", "                    , ") ++
-      writeLines(artifact.exposedModules   ,
+      writeLines(artifact.exposedModules.map(_.name),
         "  exposed-modules:    ", "                    , ") ++
+      writeLines(artifact.otherModules.map(_.name),
+        "  other-modules:      ", "                    , ") ++
       writeLines(artifact.buildDependencies ++ artifact.gitDependencies.map(_.packageName) ++ etaPackages.map(_.name).distinct,
         "  build-depends:      ", "                    , ") ++
       writeLines(artifact.mavenDependencies,

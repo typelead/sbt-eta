@@ -8,7 +8,7 @@ lazy val root = (project in file(".")).
       version       := "0.1.0-SNAPSHOT"
     )),
     name := "example",
-    exposedModules in EtaLib += "Example.Transform",
+    modules in EtaLib += exposed("Example.Transform"),
     libraryDependencies in EtaLib ++= Seq(
       eta("aeson"),
       eta("lens-aeson"),

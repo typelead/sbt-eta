@@ -2,7 +2,7 @@ lazy val hio = (project in file("hio"))
   .settings(
     name := "hio",
     version := "0.1.0-SNAPSHOT",
-    exposedModules in EtaLib += "Hello.Mod",
+    modules in EtaLib += exposed("Hello.Mod"),
     libraryDependencies in EtaLib ++= Seq(
       eta("text", "1.2.3.0"),
       eta("bytestring", "0.10.8.2")

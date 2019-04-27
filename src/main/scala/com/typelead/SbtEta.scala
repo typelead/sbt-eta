@@ -35,7 +35,7 @@ object SbtEta extends AutoPlugin {
 
     lazy val useLocalCabal = settingKey[Boolean]("If `true`, use local .cabal file in root folder. If `false`, recreate .cabal file from project settings.")
     lazy val hsMain = settingKey[Option[String]]("Specifies main class for artifact.")
-    lazy val exposedModules = settingKey[Seq[String]]("A list of modules added by this package.")
+    lazy val modules = settingKey[Seq[Module]]("A list of modules added by this package.")
     lazy val language = settingKey[String]("Specifies the language to use for the build.")
     lazy val extensions = settingKey[Seq[String]]("The set of language extensions to enable or disable for the build.")
     lazy val cppOptions = settingKey[Seq[String]]("The flags to send to the preprocessor used by the Eta compiler to preprocess files that enable the CPP extension.")
@@ -47,6 +47,9 @@ object SbtEta extends AutoPlugin {
 
     def eta(packageName: String): ModuleID = EtaDependency(packageName)
     def eta(packageName: String, version: String): ModuleID = EtaDependency(packageName, version)
+
+    def exposed(moduleName: String): Module = ExposedModule(moduleName)
+    def module (moduleName: String): Module = OtherModule  (moduleName)
 
     def branch(branch: String): GitDependency.Resolver = GitDependency.Branch(branch)
     def commit(commit: String): GitDependency.Resolver = GitDependency.Commit(commit)
@@ -128,7 +131,7 @@ object SbtEta extends AutoPlugin {
       installIncludes := Nil,
       testSuiteType := exitcodeTestSuite,
       libraryDependencies := Seq(EtaDependency.base),
-      resolvers := Seq(Resolver.mavenCentral),
+      resolvers := Seq(DefaultMavenRepository),
       gitDependencies := Nil
     )) ++
       makeSettings(EtaLib, Compile, Artifact.library) ++
@@ -153,7 +156,7 @@ object SbtEta extends AutoPlugin {
       },
       // DSL
       hsMain := None,
-      exposedModules := Nil,
+      modules := Nil,
       language := (language in Eta).value,
       extensions := (extensions in Eta).value,
       cppOptions := (cppOptions in Eta).value,
@@ -310,7 +313,7 @@ object SbtEta extends AutoPlugin {
     val library = Library(
       name = projectName,
       sourceDirectories = getFilePaths(workDir, (sourceDirectories in EtaLib).value),
-      exposedModules = (exposedModules in EtaLib).value,
+      modules = (modules in EtaLib).value,
       buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaLib).value),
       mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaLib).value),
       mavenRepositories = getMavenRepositories((resolvers in EtaLib).value),
@@ -327,6 +330,7 @@ object SbtEta extends AutoPlugin {
       Executable(
         name = projectName + "-exe",
         sourceDirectories = getFilePaths(workDir, (sourceDirectories in EtaExe).value),
+        modules = (modules in EtaExe).value,
         buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaExe).value),
         mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaExe).value),
         mavenRepositories = getMavenRepositories((resolvers in EtaExe).value),
@@ -345,6 +349,7 @@ object SbtEta extends AutoPlugin {
       TestSuite(
         name = projectName + "-test",
         sourceDirectories = getFilePaths(workDir, (sourceDirectories in EtaTest).value),
+        modules = (modules in EtaTest).value,
         buildDependencies = getEtaBuildDependencies((libraryDependencies in EtaTest).value),
         mavenDependencies = getEtaMavenDependencies((libraryDependencies in EtaTest).value),
         mavenRepositories = getMavenRepositories((resolvers in EtaTest).value),
