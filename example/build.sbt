@@ -8,7 +8,7 @@ lazy val root = (project in file(".")).
       version       := "0.1.0-SNAPSHOT"
     )),
     name := "example",
-    exposedModules in EtaLib += "Example.Transform",
+    modules in EtaLib += exposed("Example.Transform"),
     libraryDependencies in EtaLib ++= Seq(
       eta("aeson"),
       eta("lens-aeson"),
@@ -16,6 +16,7 @@ lazy val root = (project in file(".")).
       eta("text"),
       "com.google.guava" % "guava" % "25.0-jre"
     ),
+    resolvers in EtaLib ++= Seq(Resolver.jcenterRepo, Resolver.sonatypeRepo("public")),
     gitDependencies in EtaLib ++= Seq(
       git("eta-spark-core", "https://github.com/Jyothsnasrinivas/eta-spark-core", branch("master"))
     ),

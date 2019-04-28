@@ -1,12 +1,8 @@
 package com.typelead
 
-import java.lang.ProcessBuilder.Redirect
-import java.lang.{ProcessBuilder => JProcessBuilder}
-
 import EtaDependency.{EtaPackage, EtaVersion}
 import sbt.Keys._
 import sbt._
-import sbt.io.Using
 
 import scala.annotation.tailrec
 import scala.collection.mutable.ArrayBuffer
@@ -51,7 +47,7 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
 
   def freeze(log: Logger): Option[File] = {
     etlas(installPath, args("freeze"), workDir, log)
-    (workDir * Cabal.CABAL_PROJECT_FREEZE).get().headOption
+    (workDir * Cabal.CABAL_PROJECT_FREEZE).get.headOption
   }
 
   def run(log: Logger): Unit = {
@@ -104,7 +100,7 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
       log.info("Starting Eta interpreter...")
       fork(installPath, args("repl"), workDir, log)
     }
-    Run.executeTrapExit(console0(), log).recover {
+    SbtUtils.executeTrapExit(console0(), log).recover {
       case _: InterruptedException =>
         log.info("Eta REPL was interrupted.")
         ()
@@ -182,8 +178,10 @@ object Etlas {
 
     IO.createDirectory(workDir)
     val binary = getEtlasBinary(installPath)
-    logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(log)
-    val exitCode = synchronized(Process(binary +: args, workDir) ! logger)
+    val exitCode = synchronized {
+      logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(log)
+      Process(binary +: args, workDir) ! logger
+    }
 
     if (exitCode != 0) {
       sys.error("\n\n[etlas] Exit Failure " ++ exitCode.toString)
@@ -197,10 +195,7 @@ object Etlas {
 
     val binary = getEtlasBinary(installPath)
     logCmd(s"Running `$binary ${args.mkString(" ")}` in '$workDir'...")(Logger(log))
-    val jpb = new JProcessBuilder((binary +: args).toArray: _ *)
-    jpb.directory(workDir)
-    jpb.redirectInput(Redirect.INHERIT)
-    val exitCode = Process(jpb).run(SbtUtils.terminalIO).exitValue()
+    val exitCode = SbtUtils.execInherited(binary +: args, workDir)
 
     if (exitCode != 0) {
       sys.error("\n\n[etlas] Exit Failure " ++ exitCode.toString)
@@ -214,16 +209,19 @@ object Etlas {
     def addSendMetrics(flag: Boolean): Seq[String] = (if (flag) "--enable-send-metrics" else "--disable-send-metrics") +: args
   }
 
-  def etaVersion(installPath: Option[File], workDir: File, log: Logger): EtaVersion = {
-    EtaVersion(etlas(installPath, Seq("exec", "eta", "--", "--numeric-version"), workDir, log, saveOutput = true).head)
+  def etaVersion(installPath: Option[File], workDir: File, sendMetrics: Boolean, log: Logger): EtaVersion = {
+    val args = Seq("exec", "eta", "--", "--numeric-version").addSendMetrics(sendMetrics)
+    EtaVersion(etlas(installPath, args, workDir, log, saveOutput = true).head)
   }
 
-  def etlasVersion(installPath: Option[File], workDir: File, log: Logger): String = {
-    etlas(installPath, Seq("--numeric-version"), workDir, log, saveOutput = true).head
+  def etlasVersion(installPath: Option[File], workDir: File, sendMetrics: Boolean, log: Logger): String = {
+    val args = Seq("--numeric-version").addSendMetrics(sendMetrics)
+    etlas(installPath, args, workDir, log, saveOutput = true).head
   }
 
-  def etaSupported(installPath: Option[File], workDir: File, etaVersion: EtaVersion, log: Logger): Supported = {
-    etlas(installPath, Seq("exec", "eta", "--", "--supported-extensions").withEtaVersion(etaVersion), workDir, log, saveOutput = true)
+  def etaSupported(installPath: Option[File], workDir: File, etaVersion: EtaVersion, sendMetrics: Boolean, log: Logger): Supported = {
+    val args = Seq("exec", "eta", "--", "--supported-extensions").withEtaVersion(etaVersion).addSendMetrics(sendMetrics)
+    etlas(installPath, args, workDir, log, saveOutput = true)
       .foldLeft(Etlas.Supported(Nil, Nil)) {
         case (Etlas.Supported(languages, extensions), str) if str.startsWith("Haskell") =>
           Etlas.Supported(languages :+ str, extensions)
@@ -235,7 +233,7 @@ object Etlas {
   private[typelead] val DEFAULT_ETLAS_REPO = "http://cdnverify.eta-lang.org/eta-binaries"
 
   @tailrec
-  def download(repo: String, dest: File, version: String, log: Logger, errorOnWrongVersion: Boolean = false): Unit = {
+  def download(repo: String, dest: File, version: String, sendMetrics: Boolean, log: Logger, errorOnWrongVersion: Boolean = false): Unit = {
     val (arch, ext) = if (Properties.isWin)
       ("x86_64-windows", ".exe")
     else if (Properties.isMac)
@@ -249,17 +247,15 @@ object Etlas {
       val url = new URL(repo + "/etlas-" + version + "/binaries/" + arch + "/" + binary)
       log.info(s"Downloading Etlas binary from '$url' to '${dest.getCanonicalPath}' ...")
       IO.createDirectory(dest.getParentFile)
-      Using.urlInputStream(url) { input =>
-        IO.transfer(input, dest)
-      }
+      SbtUtils.download(url, dest)
     }
     if (dest.setExecutable(true)) {
-      val curVersion = etlasVersion(Some(dest), dest.getParentFile, log)
+      val curVersion = etlasVersion(Some(dest), dest.getParentFile, sendMetrics, log)
       if (curVersion == version) ()
       else if (!errorOnWrongVersion) {
         log.warn(s"Wrong version installed (actual: $curVersion, expected: $version). Try to download correct version ...")
         IO.delete(dest)
-        download(repo, dest, version, log, errorOnWrongVersion = true)
+        download(repo, dest, version, sendMetrics, log, errorOnWrongVersion = true)
       } else {
         log.error(s"Wrong version installed (actual: $curVersion, expected: $version).")
         sys.error(s"Executable '${dest.getCanonicalPath}' is not Etlas binary.")

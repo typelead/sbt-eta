@@ -2,7 +2,7 @@ lazy val root = (project in file(".")).
   settings(
     inThisBuild(Seq(
       version      := "0.3.0",
-      organization := "com.typelead",
+      organization := "com.typelead"
     )),
     name              := "sbt-eta",
     sbtPlugin         := true,
