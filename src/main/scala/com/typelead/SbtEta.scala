@@ -2,11 +2,12 @@ package com.typelead
 
 import sbt.Keys._
 import sbt.{Def, _}
-import EtaDependency.{EtaPackage, EtaVersion}
+import EtaDependency.EtaVersion
 
 object SbtEta extends AutoPlugin {
 
   import Cabal._
+  import JsonFormats._
 
   override def requires = plugins.JvmPlugin
   override def trigger  = noTrigger
@@ -100,9 +101,10 @@ object SbtEta extends AutoPlugin {
       // Plugin specific tasks
       etlas := getEtlas.value,
       etaCabal := refreshCabalTask.value,
-      etaPackage := {
-        etlas.value.getEtaPackage(etaCabal.value, Logger(streams.value))
-      },
+      etaPackage := getEtaPackageTask.value,
+      //etaPackage := {
+      //  etlas.value.getEtaPackage(etaCabal.value, Logger(streams.value))
+      //},
       // Standard tasks
       clean := {
         etlas.value.clean(Logger(streams.value))
@@ -118,8 +120,9 @@ object SbtEta extends AutoPlugin {
         etaCabal.value.getMainClass
       },
       projectDependencies := {
-        etlas.value.getMavenDependencies(etaCabal.value, Logger(streams.value), Artifact.not(Artifact.testSuite)) ++
-        etlas.value.getMavenDependencies(etaCabal.value, Logger(streams.value), Artifact.testSuite).map(_ % Test)
+        val pack = etaPackage.value
+        pack.getAllMavenDependencies(Artifact.not(Artifact.testSuite)) ++
+        pack.getAllMavenDependencies(Artifact.testSuite).map(_ % Test)
       },
       // DSL
       useLocalCabal := false,
@@ -152,7 +155,7 @@ object SbtEta extends AutoPlugin {
         }
       },
       managedClasspath := {
-        (etlas in Eta).value.getClasspath((etaCabal in Eta).value, Logger(streams.value), filter)
+        (etaPackage in Eta).value.getClasspath(filter)
       },
       // DSL
       hsMain := None,
@@ -291,13 +294,13 @@ object SbtEta extends AutoPlugin {
     }
   }
 
-  private def getProductsClasspath: Def.Initialize[Task[Classpath]] = {
+  private def getDepsProductsClasspath: Def.Initialize[Task[Classpath]] = {
     val selectDeps  = ScopeFilter(inDependencies(ThisProject, includeRoot = false))
     val productJars = ((exportedProductsIfMissing in Compile) ?? Nil).all(selectDeps)
     Def.task { productJars.value.flatten }
   }
 
-  private def getEtaPackagesTask: Def.Initialize[Task[Seq[EtaPackage]]] = {
+  private def getDepsEtaPackagesTask: Def.Initialize[Task[Seq[EtaPackage]]] = {
     val selectDeps  = ScopeFilter(inDependencies(ThisProject, includeRoot = false))
     val allPackages = (etaPackage in Eta).?.all(selectDeps)
     Def.task { allPackages.value.flatten }
@@ -386,23 +389,9 @@ object SbtEta extends AutoPlugin {
     }
   }
 
-  private case class ResolvedCabal(classpath: Classpath, freezeFile: Option[File])
-
-  private def resolveCabal(etlas: Etlas, cabal: Cabal, etaPackages: Seq[EtaPackage], workDir: File, log: Logger): ResolvedCabal = {
-    val tmpCabal = cabal.getTmpCabal(etaPackages)
-    val tmpPath = workDir / "tmp"
-    IO.createDirectory(tmpPath)
-    IO.delete((tmpPath ** "*").get)
-    Cabal.writeCabal(tmpPath, tmpCabal, Nil, log)
-    Cabal.writeCabalProject(tmpPath, tmpCabal, Nil, log)
-    ResolvedCabal(
-      classpath  = etlas.changeWorkDir(tmpPath).getClasspath(tmpCabal, log, Artifact.all),
-      freezeFile = etlas.changeWorkDir(tmpPath).freeze(log)
-    )
-  }
-
   private def refreshCabalTask: Def.Initialize[Task[Cabal]] = Def.task {
-    val log = Logger(streams.value)
+    val s = streams.value
+    val log = Logger(s)
     (useLocalCabal in Eta).?.value match {
       case None =>
         log.info("There is not Eta project.")
@@ -412,12 +401,13 @@ object SbtEta extends AutoPlugin {
         Cabal.parseCabal((baseDirectory in Eta).value, log)
       case Some(false) =>
         val workDir = (baseDirectory in Eta).value
+        val cacheFile = s.cacheDirectory / updateCacheName.value
         val cabal = createCabalTask.value
-        val etaPackages = getEtaPackagesTask.value
-        val resolved = resolveCabal((etlas in Eta).value, cabal, etaPackages, workDir, log)
+        val etaPackages = getDepsEtaPackagesTask.value
+        val resolved = resolveCabal((etlas in Eta).value, cabal, etaPackages, workDir, cacheFile, log)
         val classesFolder = (classDirectory in Compile).value
-        val productsClasspath = getProductsClasspath.value
-        val fullClasspath = (productsClasspath ++ resolved.classpath).map(_.data) :+ classesFolder
+        val productsClasspath = getDepsProductsClasspath.value
+        val fullClasspath = (productsClasspath.map(_.data) ++ resolved.classpath) :+ classesFolder
 
         IO.delete((workDir * "cabal.*").get)
         Cabal.writeCabal(workDir, cabal, etaPackages, log)
@@ -427,6 +417,36 @@ object SbtEta extends AutoPlugin {
 
         cabal
     }
+  }
+
+  private def resolveCabal(etlas: Etlas, cabal: Cabal, etaPackages: Seq[EtaPackage], workDir: File, cacheFile: File, log: Logger): Cabal.Resolved = {
+    val tmpCabal = cabal.getTmpCabal(etaPackages)
+    val tmpPath = workDir / "tmp"
+    IO.createDirectory(tmpPath)
+    IO.delete((tmpPath ** "*").get)
+    Cabal.writeCabal(tmpPath, tmpCabal, Nil, log)
+    Cabal.writeCabalProject(tmpPath, tmpCabal, Nil, log)
+    val freezeFile = etlas.changeWorkDir(tmpPath).freeze(log)
+    def doResolve: Cabal.Resolved = {
+      Cabal.Resolved(
+        classpath  = etlas.changeWorkDir(tmpPath).getEtaPackage(tmpCabal, log).getAllLibraryJars(Artifact.all),
+        freezeFile = freezeFile
+      )
+    }
+    val f = SbtUtils.anyFileChanged(cacheFile / "input_eta_files", cacheFile / "output_eta_resolved")(doResolve)
+    f(Cabal.trackedFiles(workDir, cabal))
+  }
+
+  private def getEtaPackageTask: Def.Initialize[Task[EtaPackage]] = Def.task {
+    val s = streams.value
+    val cacheFile = s.cacheDirectory / updateCacheName.value
+    val cabal = (etaCabal in Eta).value
+    val workDir = (baseDirectory in Eta).value
+    def makeEtaPackage: EtaPackage = {
+      (etlas in Eta).value.getEtaPackage(cabal, Logger(s))
+    }
+    val f = SbtUtils.anyFileChanged(cacheFile / "input_eta_files", cacheFile / "output_eta_package")(makeEtaPackage)
+    f(Cabal.trackedFiles(workDir, cabal))
   }
 
   private def etaReplCommand: Command = Command.command("eta-repl") { state =>

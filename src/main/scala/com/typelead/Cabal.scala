@@ -1,7 +1,7 @@
 package com.typelead
 
 import sbt._
-import EtaDependency.{EtaPackage, EtaVersion}
+import EtaDependency.EtaVersion
 
 final case class Cabal(projectName: String,
                        projectVersion: String,
@@ -14,8 +14,8 @@ final case class Cabal(projectName: String,
   val cabalName: String = projectName + ".cabal"
   val packageId: String = projectName + "-" + projectVersion
 
-  def artifacts: Seq[Artifact[_]] = projectLibrary.toList ++ executables ++ testSuites
-  def getArtifacts(filter: Artifact.Filter): Seq[Artifact[_]] = artifacts.filter(filter).sortBy {
+  def artifacts: Seq[Artifact] = projectLibrary.toList ++ executables ++ testSuites
+  def getArtifacts(filter: Artifact.Filter): Seq[Artifact] = artifacts.filter(filter).sortBy {
     case _: Library    => 0
     case _: Executable => 1
     case _: TestSuite  => 2
@@ -120,9 +120,8 @@ object Cabal {
     val detailed: Value = Value("detailed-0.9")
   }
 
-  sealed trait Artifact[A <: Artifact[A]] {
+  sealed trait Artifact {
     def name: String
-    def depsPackage: String
     def sourceDirectories: Seq[String]
     def modules: Seq[Module]
     def buildDependencies: Seq[String]
@@ -137,9 +136,9 @@ object Cabal {
     def extensions: Seq[String]
     def language: String
 
+    def depsPackage: String
     def exposedModules: Seq[Module]
     def otherModules: Seq[Module]
-    def addLibrary(artifact: Option[Library]): A
   }
 
   final case class Library(override val name: String,
@@ -154,7 +153,7 @@ object Cabal {
                            override val includeDirs: Seq[String],
                            override val installIncludes: Seq[String],
                            override val extensions: Seq[String],
-                           override val language: String) extends Artifact[Library] {
+                           override val language: String) extends Artifact {
 
     override val depsPackage: String = "lib:" + name
     override val hsMain: Option[String] = None
@@ -164,8 +163,6 @@ object Cabal {
     val otherModules: Seq[Module] = modules.collect {
       case other: OtherModule => other
     }
-
-    override def addLibrary(artifact: Option[Library]): Library = this
 
   }
 
@@ -182,13 +179,11 @@ object Cabal {
                               override val includeDirs: Seq[String],
                               override val installIncludes: Seq[String],
                               override val extensions: Seq[String],
-                              override val language: String) extends Artifact[Executable] {
+                              override val language: String) extends Artifact {
 
     override val depsPackage: String = "exe:" + name
     override val exposedModules: Seq[Module] = Nil
     override val otherModules: Seq[Module] = modules
-
-    override def addLibrary(artifact: Option[Library]): Executable = this.copy(buildDependencies = buildDependencies ++ artifact.map(_.name).toList)
 
   }
 
@@ -206,19 +201,17 @@ object Cabal {
                              override val installIncludes: Seq[String],
                              override val extensions: Seq[String],
                              override val language: String,
-                             testSuiteType: TestSuiteTypes.Value) extends Artifact[TestSuite] {
+                             testSuiteType: TestSuiteTypes.Value) extends Artifact {
 
     override val depsPackage: String = "test:" + name
     override val exposedModules: Seq[Module] = Nil
     override val otherModules: Seq[Module] = modules
 
-    override def addLibrary(artifact: Option[Library]): TestSuite = this.copy(buildDependencies = buildDependencies ++ artifact.map(_.name).toList)
-
   }
 
   object Artifact {
 
-    type Filter = Artifact[_] => Boolean
+    type Filter = Artifact => Boolean
 
     def lib(name: String) : Library    = Library   (name, Nil, Nil, Nil, Nil, Nil, Nil,       Nil, Nil, Nil, Nil, Nil, "Haskell2010")
     def exe(name: String) : Executable = Executable(name, Nil, Nil, Nil, Nil, Nil, Nil, None, Nil, Nil, Nil, Nil, Nil, "Haskell2010")
@@ -243,6 +236,8 @@ object Cabal {
     def or (f1: Filter, f2: Filter): Filter = a => f1(a) || f2(a)
 
   }
+
+  final case class Resolved(classpath: Seq[File], freezeFile: Option[File])
 
   def parseCabal(cwd: File, log: Logger): Cabal = {
     getCabalFile(cwd) match {
@@ -285,7 +280,7 @@ object Cabal {
     }
   }
 
-  private def getMainTag[A <: Artifact[A]](artifact: Artifact[A]): String = artifact match {
+  private def getMainTag(artifact: Artifact): String = artifact match {
     case t: TestSuite if t.testSuiteType == TestSuiteTypes.exitcode =>
       "  main-is:            "
     case t: TestSuite if t.testSuiteType == TestSuiteTypes.detailed =>
@@ -299,7 +294,7 @@ object Cabal {
     else Nil
   }
 
-  private def writeArtifact[A <: Artifact[A]](artifact: Artifact[A], etaPackages: Seq[EtaPackage]): Seq[String] = {
+  private def writeArtifact(artifact: Artifact, etaPackages: Seq[EtaPackage], library: Option[Library]): Seq[String] = {
     val lines = artifact match {
       case t: TestSuite =>
         Seq("  type:               " + t.testSuiteType.toString)
@@ -314,7 +309,7 @@ object Cabal {
         "  exposed-modules:    ", "                    , ") ++
       writeLines(artifact.otherModules.map(_.name),
         "  other-modules:      ", "                    , ") ++
-      writeLines(artifact.buildDependencies ++ artifact.gitDependencies.map(_.packageName) ++ etaPackages.map(_.name).distinct,
+      writeLines(artifact.buildDependencies ++ artifact.gitDependencies.map(_.packageName) ++ etaPackages.map(_.name).distinct ++ library.map(_.name).toList,
         "  build-depends:      ", "                    , ") ++
       writeLines(artifact.mavenDependencies,
         "  maven-depends:      ", "                    , ") ++
@@ -386,25 +381,32 @@ object Cabal {
         Seq(
           "",
           "library"
-        ) ++ writeArtifact(artifact, etaPackages)
+        ) ++ writeArtifact(artifact, etaPackages, None)
       }.getOrElse(Nil)
       val executableDefs = cabal.executables.flatMap { artifact =>
         Seq(
           "",
           "executable " + artifact.name
-        ) ++ writeArtifact(artifact.addLibrary(cabal.projectLibrary), etaPackages)
+        ) ++ writeArtifact(artifact, etaPackages, cabal.projectLibrary)
       }
       val testSuiteDefs = cabal.testSuites.flatMap { artifact =>
         Seq(
           "",
           "test-suite " + artifact.name
-        ) ++ writeArtifact(artifact.addLibrary(cabal.projectLibrary), etaPackages)
+        ) ++ writeArtifact(artifact, etaPackages, cabal.projectLibrary)
       }
       val lines = headers ++ libraryDefs ++ executableDefs ++ testSuiteDefs
 
       IO.writeLines(cwd / cabal.cabalName, lines)
     }
   }
+
+  def trackedFiles(cwd: File, cabal: Cabal): Seq[File] = List(
+    cwd / CABAL_PROJECT,
+    cwd / CABAL_PROJECT_LOCAL,
+    cwd / CABAL_PROJECT_FREEZE,
+    cwd / cabal.cabalName
+  )
 
   def getCabalFile(cwd: File): Option[String] = {
     cwd.listFiles.map(_.getName).find(_.matches(""".*\.cabal$"""))
