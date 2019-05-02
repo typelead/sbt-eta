@@ -102,13 +102,7 @@ object SbtEta extends AutoPlugin {
       etlas := getEtlas.value,
       etaCabal := refreshCabalTask.value,
       etaPackage := getEtaPackageTask.value,
-      //etaPackage := {
-      //  etlas.value.getEtaPackage(etaCabal.value, Logger(streams.value))
-      //},
       // Standard tasks
-      clean := {
-        etlas.value.clean(Logger(streams.value))
-      },
       run := {
         etlas.value.runArtifacts(etaCabal.value, Logger(streams.value), Artifact.all)
       },
@@ -186,14 +180,11 @@ object SbtEta extends AutoPlugin {
 
     // Standard tasks override
 
-    clean := {
-      (clean in Eta).value
-      clean.value
-    },
-    update := {
-      (projectDependencies in Eta).value
-      update.value
-    },
+    cleanFiles += (target in Eta).value,
+    cleanKeepFiles += (baseDirectory in Eta).value,
+    //update := (update dependsOn Def.task {
+    //  IO.delete(getCacheFile.value)
+    //}).value,
 
     projectDependencies ++= (projectDependencies in Eta).value,
 
@@ -269,6 +260,10 @@ object SbtEta extends AutoPlugin {
       getEtaVersion.value,
       (etaSendMetrics in ThisBuild).value
     )
+  }
+
+  private def getCacheFile: Def.Initialize[File] = Def.setting {
+    (baseDirectory in Eta).value / "cache"
   }
 
   private def getFilePaths(workDir: File, files: Seq[File]): Seq[String] = {
@@ -401,7 +396,7 @@ object SbtEta extends AutoPlugin {
         Cabal.parseCabal((baseDirectory in Eta).value, log)
       case Some(false) =>
         val workDir = (baseDirectory in Eta).value
-        val cacheFile = s.cacheDirectory / updateCacheName.value
+        val cacheFile = getCacheFile.value
         val cabal = createCabalTask.value
         val etaPackages = getDepsEtaPackagesTask.value
         val resolved = resolveCabal((etlas in Eta).value, cabal, etaPackages, workDir, cacheFile, log)
@@ -433,19 +428,19 @@ object SbtEta extends AutoPlugin {
         freezeFile = freezeFile
       )
     }
-    val f = SbtUtils.anyFileChanged(cacheFile / "input_eta_files", cacheFile / "output_eta_resolved")(doResolve)
+    val f = SbtUtils.anyFileChanged(cacheFile / "input_etaResolved", cacheFile / "output_etaResolved")(doResolve)
     f(Cabal.trackedFiles(workDir, cabal))
   }
 
   private def getEtaPackageTask: Def.Initialize[Task[EtaPackage]] = Def.task {
     val s = streams.value
-    val cacheFile = s.cacheDirectory / updateCacheName.value
+    val cacheFile = getCacheFile.value
     val cabal = (etaCabal in Eta).value
     val workDir = (baseDirectory in Eta).value
     def makeEtaPackage: EtaPackage = {
       (etlas in Eta).value.getEtaPackage(cabal, Logger(s))
     }
-    val f = SbtUtils.anyFileChanged(cacheFile / "input_eta_files", cacheFile / "output_eta_package")(makeEtaPackage)
+    val f = SbtUtils.anyFileChanged(cacheFile / "input_etaPackage", cacheFile / "output_etaPackage")(makeEtaPackage)
     f(Cabal.trackedFiles(workDir, cabal))
   }
 
