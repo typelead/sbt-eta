@@ -6,11 +6,12 @@ import java.io.OutputStream
 
 import sbt.internal.util.JLine
 import sbt.io.Using
+import sjsonnew.{BasicJsonProtocol, JsonFormat}
 
-import scala.sys.process.{BasicIO, ProcessIO, Process}
+import scala.sys.process.{BasicIO, Process, ProcessIO}
 import scala.util.Try
 
-object SbtUtils {
+object SbtUtils extends BasicJsonProtocol {
 
   def download(url: URL, file: File): Unit = {
     Using.urlInputStream(url) { input =>
@@ -39,6 +40,20 @@ object SbtUtils {
   private def inTerminal: OutputStream => Unit = { out =>
     try { BasicIO.transferFully(JLine.createReader().getInput, out) }
     catch { case _: InterruptedException => () }
+  }
+
+  def hashAllFiles(files: Seq[File]): String = files.map(file => if (file.exists()) Hash.toHex(Hash(file)) else "").mkString("")
+
+  def anyFileChanged[O : JsonFormat](inCacheFile: File, outCacheFile: File)(value: => O): Seq[File] => O = {
+    val f = Tracked.inputChanged(inCacheFile) {
+      (inChanged: Boolean, in: String) =>
+        val outCache = Tracked.lastOutput[String, O](outCacheFile) {
+          case (_, Some(out)) if !inChanged => out
+          case _                            => value
+        }
+        outCache(in)
+    }
+    hashAllFiles _ andThen f
   }
 
 }

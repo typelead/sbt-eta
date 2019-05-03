@@ -32,11 +32,6 @@ object EtaDependency {
     }
   }
 
-  final case class EtaPackage(cabal: Cabal, jars: Seq[File], packageDb: File) {
-    val name: String = cabal.projectName
-    val version: String = cabal.projectVersion
-  }
-
   // Eta version
 
   final case class EtaVersion(private val underlying: String) {

@@ -1,7 +1,6 @@
 package com.typelead
 
-import EtaDependency.{EtaPackage, EtaVersion}
-import sbt.Keys._
+import EtaDependency.EtaVersion
 import sbt._
 
 import scala.annotation.tailrec
@@ -11,6 +10,7 @@ import scala.util.{Properties, Try}
 
 final case class Etlas(installPath: Option[File], workDir: File, dist: File, etaVersion: EtaVersion, sendMetrics: Boolean) {
 
+  import Cabal._
   import Etlas._
 
   def changeWorkDir(workDir: File): Etlas = this.copy(workDir = workDir)
@@ -23,7 +23,7 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
     etlas(installPath, args("build"), workDir, log, filterLog = _ => true)
   }
 
-  def buildArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
+  def buildArtifacts(cabal: Cabal, log: Logger, filter: Artifact.Filter): Unit = {
     cabal.getArtifacts(filter).foreach {
       artifact => etlas(installPath, args("build", artifact.depsPackage), workDir, log, filterLog = _ => true)
     }
@@ -33,11 +33,17 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
     etlas(installPath, args("clean"), workDir, log)
   }
 
-  def deps(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Seq[String] = {
-    def filterDepsLog(s: String): Boolean = defaultFilterLog(s) || !(s.startsWith("dependency") || s.startsWith("maven-dependencies"))
+  def deps(cabal: Cabal, log: Logger, filter: Artifact.Filter): Seq[EtaPackage.Dependency] = {
     cabal.getArtifacts(filter).flatMap { artifact =>
-      etlas(installPath, args("deps", artifact.depsPackage, "--keep-going"), workDir, log, saveOutput = true, filterLog = filterDepsLog)
+      depsArtifact(artifact, log)
     }
+  }
+
+  def depsArtifact(artifact: Artifact, log: Logger): Seq[EtaPackage.Dependency] = {
+    def filterDepsLog(s: String): Boolean = defaultFilterLog(s) || !(s.startsWith("dependency") || s.startsWith("maven-dependencies"))
+    log.info(s"Refresh dependencies (${artifact.name}) ...")
+    val depsList = etlas(installPath, args("deps", artifact.depsPackage, "--keep-going"), workDir, log, saveOutput = true, filterLog = filterDepsLog)
+    parseAllDependencies(depsList)
   }
 
   def install(log: Logger): Unit = {
@@ -47,15 +53,15 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
 
   def freeze(log: Logger): Option[File] = {
     etlas(installPath, args("freeze"), workDir, log)
-    (workDir * Cabal.CABAL_PROJECT_FREEZE).get.headOption
+    (workDir * CABAL_PROJECT_FREEZE).get.headOption
   }
 
   def run(log: Logger): Unit = {
     etlas(installPath, args("run"), workDir, log)
   }
 
-  def runArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
-    cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.executable, filter)).foreach { artifact =>
+  def runArtifacts(cabal: Cabal, log: Logger, filter: Artifact.Filter): Unit = {
+    cabal.getArtifacts(Artifact.and(Artifact.executable, filter)).foreach { artifact =>
       etlas(installPath, args("run", artifact.name), workDir, log, filterLog = _ => true)
     }
   }
@@ -64,8 +70,8 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
     etlas(installPath, args("test"), workDir, log, filterLog = _ => true)
   }
 
-  def testArtifacts(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Unit = {
-    cabal.getArtifacts(Cabal.Artifact.and(Cabal.Artifact.testSuite, filter)).foreach { artifact =>
+  def testArtifacts(cabal: Cabal, log: Logger, filter: Artifact.Filter): Unit = {
+    cabal.getArtifacts(Artifact.and(Artifact.testSuite, filter)).foreach { artifact =>
       etlas(installPath, args("test", artifact.name), workDir, log, filterLog = _ => true)
     }
   }
@@ -107,24 +113,16 @@ final case class Etlas(installPath: Option[File], workDir: File, dist: File, eta
     }
   }
 
-  // Resolve dependencies
-
-  def getMavenDependencies(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Seq[ModuleID] = {
-    log.info("Checking Maven dependencies...")
-    parseMavenDeps(deps(cabal, log, filter))
-  }
-
-  def getClasspath(cabal: Cabal, log: Logger, filter: Cabal.Artifact.Filter): Classpath = {
-    log.info("Retrieving Eta dependencies classpath...")
-    parseDeps(deps(cabal, log, filter))
-      .map(s => PathFinder(file(s)))
-      .foldLeft(PathFinder.empty)((s1, s2) => s1 +++ s2)
-      .classpath
-  }
-
   def getEtaPackage(cabal: Cabal, log: Logger): EtaPackage = {
     log.info("Resolve package dependencies...")
-    EtaPackage(cabal, cabal.getArtifactsJars(dist, etaVersion, Cabal.Artifact.library), getPackageDd(dist, etaVersion))
+    EtaPackage(
+      cabal,
+      cabal.getArtifactsJars(dist, etaVersion, Artifact.library),
+      getPackageDd(dist, etaVersion),
+      cabal.artifacts.map { artifact =>
+        artifact.name -> depsArtifact(artifact, log)
+      }.toMap
+    )
   }
 
 }
@@ -265,29 +263,34 @@ object Etlas {
     }
   }
 
-  private def findAllDependencies(allLines: Seq[String], idx: Int): Seq[String] = {
-    for {
-      line <- allLines if line.startsWith("dependency,")
-      parts = line.split(",") if parts.length > idx
-    } yield parts(idx)
-  }
+  private def parseAllDependencies(allLines: Seq[String]): Seq[EtaPackage.Dependency] = {
 
-  private def parseDeps(allLines: Seq[String]): Seq[String] = {
-    findAllDependencies(allLines, 3)
-  }
+    val dependencyPrefix = "dependency,"
+    val mavenDepsPrefix = "maven-dependencies,"
 
-  private def findAllMavenDependencies(allLines: Seq[String]): Seq[String] = {
-    for {
-      line <- allLines if line.startsWith("maven-dependencies,")
-    } yield line.dropWhile(_ != ',').tail
-  }
+    def parseMavenModules(line: String): Seq[ModuleID] = {
+      for {
+        parts <- line.split(":").grouped(3).toList if parts.length == 3
+      } yield parts(0) % parts(1) % parts(2)
+    }
 
-  private def parseMavenDeps(allLines: Seq[String]): Seq[ModuleID] = {
-    for {
-      line <- findAllMavenDependencies(allLines) ++ findAllDependencies(allLines, 2)
-      parts <- line.split(":").grouped(3) if parts.length == 3
-      module = parts(0) % parts(1) % parts(2)
-    } yield module
+    allLines.collect {
+      case line if line.startsWith(dependencyPrefix) =>
+        val parts = line.replace(dependencyPrefix, "").split(",", 4)
+        for {
+          name <- parts.lift(0).toList
+        } yield EtaPackage.LibraryDependency(
+          name,
+          parts.lift(1).map(parseMavenModules).getOrElse(Nil),
+          parts.lift(2).map(_.split(":").toList).getOrElse(Nil).map(jar => file(jar)),
+          parts.lift(3).map(_.split(":").toList).getOrElse(Nil)
+        )
+      case line if line.startsWith(mavenDepsPrefix) =>
+        for {
+          module <- parseMavenModules(line.replace(mavenDepsPrefix, ""))
+        } yield EtaPackage.MavenDependency(module)
+    }.flatten
+
   }
 
   def getPackageDd(dist: File, etaVersion: EtaVersion): File = {
