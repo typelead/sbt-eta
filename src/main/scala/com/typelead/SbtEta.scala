@@ -25,8 +25,8 @@ object SbtEta extends AutoPlugin {
 
     lazy val etaVersion      = settingKey[String]("Version of the Eta compiler.")
     lazy val etlasVersion    = settingKey[String]("Version of the Etlas build tool.")
-    lazy val etlasUseLocal   = settingKey[Boolean]("If `true`, use instance of Etlas installed in your system. If `false`, use Etlas specified by project settings.")
-    lazy val etlasPath       = settingKey[File]("Specifies the path to Etlas executable used in this build.")
+    lazy val etlasUseSystem  = settingKey[Boolean]("If `true`, use instance of Etlas installed in your system. If `false`, use Etlas specified by project settings.")
+    lazy val etlasPath       = settingKey[Option[File]]("Specifies the path to Etlas executable used in this build.")
     lazy val etlasRepository = settingKey[String]("URL address of Etlas repository. Do not change!")
     lazy val etaSendMetrics  = settingKey[Boolean]("Would you like to help us make Eta the fastest growing programming language, and help pure functional programming become mainstream?")
 
@@ -35,7 +35,7 @@ object SbtEta extends AutoPlugin {
     // Eta configuration DSL
 
     lazy val useLocalCabal = settingKey[Boolean]("If `true`, use local .cabal file in root folder. If `false`, recreate .cabal file from project settings.")
-    lazy val hsMain = settingKey[Option[String]]("Specifies main class for artifact.")
+    lazy val hsMain = settingKey[Option[String]]("The name of the .hs file containing the Main module.")
     lazy val modules = settingKey[Seq[Module]]("A list of modules added by this package.")
     lazy val language = settingKey[String]("Specifies the language to use for the build.")
     lazy val extensions = settingKey[Seq[String]]("The set of language extensions to enable or disable for the build.")
@@ -79,11 +79,12 @@ object SbtEta extends AutoPlugin {
   private lazy val buildEtaSettings: Seq[Def.Setting[_]] = {
     inThisBuild(Seq(
       etaSendMetrics := true,
-      etlasUseLocal := true,
-      etlasPath := BuildPaths.outputDirectory(BuildPaths.projectStandard(baseDirectory.value)) / "etlas" / "etlas",
+      etlasUseSystem := true,
+      etlasPath := None,
       etlasRepository := Etlas.DEFAULT_ETLAS_REPO,
       etlasVersion := {
-        Etlas.etlasVersion(None, baseDirectory.value, etaSendMetrics.value, Logger(sLog.value))
+        val installPath = if (etlasUseSystem.value) None else etlasPath.value
+        Etlas.etlasVersion(installPath, baseDirectory.value, etaSendMetrics.value, Logger(sLog.value))
       },
       etaVersion := {
         Etlas.etaVersion(getEtlasInstallPath.value, baseDirectory.value, etaSendMetrics.value, Logger(sLog.value)).friendlyVersion
@@ -143,13 +144,14 @@ object SbtEta extends AutoPlugin {
       exportedProducts := {
         val log = Logger(streams.value)
         val _ = (etaCompile in base).value
-        (etaCabal in Eta).value.getArtifactsJars((target in Eta).value, getEtaVersion.value, filter).flatMap { jar =>
+        val jars = (etaCabal in Eta).value.getArtifactsJars((target in Eta).value, getEtaVersion.value, filter).filter(_.exists()).map { jar =>
           log.info("Eta artifact JAR: " + jar.getCanonicalPath)
-          PathFinder(jar).classpath
+          jar
         }
+        PathFinder(jars).classpath
       },
       managedClasspath := {
-        (etaPackage in Eta).value.getClasspath(filter)
+        (etaPackage in Eta).value.getClasspath(filter).filter(_.data.exists())
       },
       // DSL
       hsMain := None,
@@ -237,12 +239,14 @@ object SbtEta extends AutoPlugin {
   }
 
   private def getEtlasInstallPath: Def.Initialize[Option[File]] = Def.setting {
-    if ((etlasUseLocal in ThisBuild).value) {
+    if ((etlasUseSystem in ThisBuild).value) {
       None
+    } else if ((etlasPath in ThisBuild).value.isDefined) {
+      (etlasPath in ThisBuild).value
     } else {
       val etlasVer = (etlasVersion in ThisBuild).value
       val etlasRepo = (etlasRepository in ThisBuild).value
-      val installPath = (etlasPath in ThisBuild).value
+      val installPath = BuildPaths.outputDirectory(BuildPaths.projectStandard((baseDirectory in ThisBuild).value)) / "etlas" / "etlas"
       val sendMetricsFlag = (etaSendMetrics in ThisBuild).value
       val log = Logger(sLog.value)
       synchronized {

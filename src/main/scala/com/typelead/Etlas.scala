@@ -282,7 +282,7 @@ object Etlas {
         } yield EtaPackage.LibraryDependency(
           name,
           parts.lift(1).map(parseMavenModules).getOrElse(Nil),
-          parts.lift(2).map(_.split(":").toList).getOrElse(Nil).map(jar => file(jar)),
+          parts.lift(2).map(_.split(":").toList).getOrElse(Nil).map(jar => file(jar)).filter(_.exists()),
           parts.lift(3).map(_.split(":").toList).getOrElse(Nil)
         )
       case line if line.startsWith(mavenDepsPrefix) =>
